@@ -1,10 +1,10 @@
 #include "visa_connection.h"
+#include "platform/dynamic_loader.h"
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <algorithm>
 #include <cctype>
-#include <windows.h>
 
 VISAConnection::VISAConnection()
     : resourceString_("")
@@ -24,6 +24,7 @@ VISAConnection::VISAConnection()
     , viSetAttribute_(nullptr)
     , viClear_(nullptr)
     , viStatusDesc_(nullptr)
+    , visaLib_(new Platform::DynamicLibrary())
 {
 }
 
@@ -35,6 +36,7 @@ VISAConnection::~VISAConnection()
         rmInitialized_ = false;
     }
     unloadVISALibrary();
+    delete visaLib_;
 }
 
 bool VISAConnection::loadVISALibrary()
@@ -43,46 +45,48 @@ bool VISAConnection::loadVISALibrary()
         return true;  // Already loaded
     }
 
-    // Try to load VISA library (try 64-bit first, then 32-bit)
-    HMODULE hModule = LoadLibraryA("visa64.dll");
-    if (!hModule) {
-        hModule = LoadLibraryA("visa32.dll");
-    }
-    
-    if (!hModule) {
-        setLastError("VISA library not found. Please install NI-VISA or compatible VISA driver.");
+    // Try to load VISA library
+#ifdef PLATFORM_WINDOWS
+    std::string libName = "visa64";
+#else
+    std::string libName = "visa";
+#endif
+
+    if (!visaLib_->load(libName)) {
+        setLastError("VISA library not found. Please install NI-VISA or compatible VISA driver. " + 
+                     visaLib_->getLastError());
         return false;
     }
 
-    visaDll_ = hModule;
+    // Load function pointers using platform wrapper
+    bool success = true;
+    success &= visaLib_->getFunction("viOpenDefaultRM", viOpenDefaultRM_);
+    success &= visaLib_->getFunction("viOpen", viOpen_);
+    success &= visaLib_->getFunction("viClose", viClose_);
+    success &= visaLib_->getFunction("viWrite", viWrite_);
+    success &= visaLib_->getFunction("viRead", viRead_);
+    success &= visaLib_->getFunction("viSetAttribute", viSetAttribute_);
+    success &= visaLib_->getFunction("viClear", viClear_);
+    success &= visaLib_->getFunction("viStatusDesc", viStatusDesc_);
 
-    // Load function pointers
-    viOpenDefaultRM_ = (ViOpenDefaultRMFunc)GetProcAddress(hModule, "viOpenDefaultRM");
-    viOpen_ = (ViOpenFunc)GetProcAddress(hModule, "viOpen");
-    viClose_ = (ViCloseFunc)GetProcAddress(hModule, "viClose");
-    viWrite_ = (ViWriteFunc)GetProcAddress(hModule, "viWrite");
-    viRead_ = (ViReadFunc)GetProcAddress(hModule, "viRead");
-    viSetAttribute_ = (ViSetAttributeFunc)GetProcAddress(hModule, "viSetAttribute");
-    viClear_ = (ViClearFunc)GetProcAddress(hModule, "viClear");
-    viStatusDesc_ = (ViStatusDescFunc)GetProcAddress(hModule, "viStatusDesc");
-
-    if (!viOpenDefaultRM_ || !viOpen_ || !viClose_ || !viWrite_ || !viRead_) {
-        setLastError("Failed to load VISA functions");
+    if (!success) {
+        setLastError("Failed to load VISA functions: " + visaLib_->getLastError());
         unloadVISALibrary();
         return false;
     }
 
+    visaDll_ = (void*)1;  // Mark as loaded
     visaAvailable_ = true;
     return true;
 }
 
 void VISAConnection::unloadVISALibrary()
 {
-    if (visaDll_) {
-        FreeLibrary((HMODULE)visaDll_);
-        visaDll_ = nullptr;
-        visaAvailable_ = false;
+    if (visaLib_) {
+        visaLib_->unload();
     }
+    visaDll_ = nullptr;
+    visaAvailable_ = false;
 }
 
 bool VISAConnection::initialize()
@@ -252,14 +256,16 @@ bool VISAConnection::isAvailable() const
         return true;
     }
 
-    // Try loading
-    HMODULE hModule = LoadLibraryA("visa64.dll");
-    if (!hModule) {
-        hModule = LoadLibraryA("visa32.dll");
-    }
+    // Try loading temporarily to check availability
+    Platform::DynamicLibrary testLib;
+#ifdef PLATFORM_WINDOWS
+    std::string libName = "visa64";
+#else
+    std::string libName = "visa";
+#endif
     
-    if (hModule) {
-        FreeLibrary(hModule);
+    if (testLib.load(libName)) {
+        testLib.unload();
         return true;
     }
     

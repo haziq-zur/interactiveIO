@@ -4,6 +4,11 @@
 #include "instrument_connection.h"
 #include <string>
 
+// Forward declaration
+namespace Platform {
+    class DynamicLibrary;
+}
+
 // VISA types - these will be loaded dynamically at runtime
 typedef unsigned long ViStatus;
 typedef unsigned long ViSession;
@@ -29,6 +34,7 @@ typedef ViStatus (*ViStatusDescFunc)(ViSession, ViStatus, char*);
 /**
  * @brief VISA (Virtual Instrument Software Architecture) connection implementation
  * 
+ * Cross-platform support for Windows and Linux.
  * Supports multiple instrument interfaces: GPIB, USB, VXI-11, Serial
  * Uses dynamic loading to work even when VISA is not installed.
  */
@@ -62,7 +68,8 @@ private:
     bool rmInitialized_;
     bool visaAvailable_;
     unsigned int timeoutMs_;
-    void* visaDll_;  // HMODULE handle
+    void* visaDll_;  // Platform-agnostic library handle marker
+    Platform::DynamicLibrary* visaLib_;  // Cross-platform dynamic loader
     
     ViSession defaultRM_;
     ViSession instrSession_;

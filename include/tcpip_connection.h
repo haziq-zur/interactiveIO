@@ -2,13 +2,13 @@
 #define TCPIP_CONNECTION_H
 
 #include "instrument_connection.h"
-#include <winsock2.h>
 #include <string>
+#include <cstdint>
 
 /**
  * @brief TCP/IP Socket connection implementation
  * 
- * Direct socket communication using Winsock2 for Windows.
+ * Cross-platform socket communication for Windows and Linux.
  * Provides fast, lightweight connection to instruments over TCP/IP.
  */
 class TCPIPConnection : public IInstrumentConnection {
@@ -33,7 +33,12 @@ public:
     int getPort() const { return port_; }
 
 private:
-    SOCKET socket_;
+    // Forward declaration of platform-specific implementation
+    class Impl;
+    Impl* pImpl_;
+    
+    // Legacy members for backward compatibility
+    uint64_t socket_;  // Changed from SOCKET to uint64_t for cross-platform
     std::string ip_;
     int port_;
     bool connected_;

@@ -1,25 +1,74 @@
 # interactiveIO
 
-Interactive SCPI instrument communication tool with unified interface supporting both TCP/IP (Winsock2) and VISA protocols.
+Interactive SCPI instrument communication tool with unified interface supporting both TCP/IP and VISA protocols.
 
 ## Features
 
+- **Cross-Platform Support**: Single codebase for Windows and Linux
 - **Unified Application**: Single executable with runtime protocol selection
-- **TCP/IP Communication**: Direct socket communication using Winsock2
+- **TCP/IP Communication**: Cross-platform socket communication (Winsock2 on Windows, Berkeley sockets on Linux)
 - **VISA Protocol Support**: Industry-standard VISA for GPIB, USB, VXI-11, and Serial instruments
-- **Dynamic VISA Loading**: Works even without NI-VISA installed (loads DLL at runtime)
+- **Dynamic VISA Loading**: Works even without NI-VISA installed (loads library at runtime)
 - **Interactive Menu**: User-friendly protocol selection and configuration
 - **Protocol-Specific Features**: Timeout control, buffer clearing, connection management
-- **Comprehensive Testing**: Full unit test coverage with Google Test
+- **Comprehensive Testing**: Full unit test coverage with Google Test (56 tests)
 - **Debug Support**: Debug and Release build configurations
+
+## Platform Support
+
+### Windows ✅
+- Visual Studio 2022 (MSVC 19.44+)
+- CMake 3.15+
+- Uses Winsock2 for networking
+- Loads `visa64.dll` or `visa32.dll` dynamically
+
+### Linux ✅ (Ready for Testing)
+- GCC 11+ or Clang 14+
+- CMake 3.15+
+- Uses Berkeley sockets (built-in)
+- Loads `libvisa.so` dynamically
+
+### macOS (Future)
+- Platform abstraction layer ready
+- Requires testing on macOS hardware
 
 ## Quick Start
 
-### Run the Application
+### Windows
 
-```bash
+#### Run the Application
+
+```powershell
 .\build\bin\Release\interactiveIO.exe
 ```
+
+**Or create a distribution package:**
+
+```powershell
+package.bat
+```
+
+This creates a standalone, self-contained executable in `dist/` folder with all documentation. The packaged application:
+- ✅ Works on any Windows 7+ machine
+- ✅ No runtime dependencies for TCP/IP connections  
+- ✅ No installation required - just copy and run
+- ⚠️ VISA support requires NI-VISA installation (optional)
+
+### Linux
+
+```bash
+# Build
+cmake -B build
+cmake --build build
+
+# Run
+./build/bin/interactiveIO
+
+# Run tests
+cd build && ctest
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for distribution details and [CROSS_PLATFORM_STATUS.md](CROSS_PLATFORM_STATUS.md) for implementation details.
 
 The application will display a menu to select your communication protocol:
 

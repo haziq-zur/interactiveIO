@@ -71,6 +71,7 @@ CTestTestfile.cmake
 /build/
 /bin/
 /lib/
+/dist/
 
 # Test executables
 scpi_tests

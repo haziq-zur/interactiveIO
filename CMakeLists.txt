@@ -16,16 +16,29 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build (Debug or Release)" FORCE)
 endif()
 
+# Option for static runtime linking (makes executable self-contained)
+option(STATIC_RUNTIME "Link with static runtime library" ON)
+
 # Debug-specific flags
 if(MSVC)
-    # MSVC Debug flags
-    set(CMAKE_CXX_FLAGS_DEBUG "/MDd /Zi /Ob0 /Od /RTC1")
-    set(CMAKE_CXX_FLAGS_RELEASE "/MD /O2 /Ob2 /DNDEBUG")
+    if(STATIC_RUNTIME)
+        # Static runtime - no external DLL dependencies for MSVC runtime
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        set(CMAKE_CXX_FLAGS_DEBUG "/MTd /Zi /Ob0 /Od /RTC1")
+        set(CMAKE_CXX_FLAGS_RELEASE "/MT /O2 /Ob2 /DNDEBUG")
+    else()
+        # Dynamic runtime - requires vcruntime DLLs
+        set(CMAKE_CXX_FLAGS_DEBUG "/MDd /Zi /Ob0 /Od /RTC1")
+        set(CMAKE_CXX_FLAGS_RELEASE "/MD /O2 /Ob2 /DNDEBUG")
+    endif()
     add_compile_definitions($<$<CONFIG:Debug>:_DEBUG>)
 else()
-    # GCC/Clang Debug flags
+    # GCC/Clang flags
     set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+    if(STATIC_RUNTIME)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libgcc -static-libstdc++")
+    endif()
 endif()
 
 # Include directories
@@ -50,6 +63,8 @@ FetchContent_MakeAvailable(googletest)
 set(INSTRUMENT_CORE_SOURCES
     src/tcpip_connection.cpp
     src/visa_connection.cpp
+    src/platform/socket_wrapper.cpp
+    src/platform/dynamic_loader.cpp
 )
 
 add_library(instrument_core ${INSTRUMENT_CORE_SOURCES})
@@ -61,9 +76,13 @@ target_include_directories(instrument_core PUBLIC
 
 # Platform-specific configurations for library
 if(WIN32)
-    # TCP/IP requires Winsock2
+    # TCP/IP requires Winsock2 on Windows
     target_link_libraries(instrument_core PUBLIC ws2_32)
     # Note: VISA is dynamically loaded at runtime, no link-time dependency
+elseif(UNIX)
+    # On Linux/macOS, sockets are built-in
+    # Link with dl library for dynamic loading (dlopen/dlsym)
+    target_link_libraries(instrument_core PUBLIC ${CMAKE_DL_LIBS})
 endif()
 
 # Add the main executable with unified protocol menu
@@ -92,6 +111,14 @@ set_target_properties(interactiveIO PROPERTIES
 # Installation rules (optional)
 install(TARGETS interactiveIO
     RUNTIME DESTINATION bin
+)
+
+# Install documentation
+install(FILES 
+    "${CMAKE_SOURCE_DIR}/README.md"
+    "${CMAKE_SOURCE_DIR}/REFACTORING_SUMMARY.md"
+    "${CMAKE_SOURCE_DIR}/VISA_GUIDE.md"
+    DESTINATION docs
 )
 
 # Add unit tests subdirectory
