@@ -38,8 +38,10 @@ Select Communication Protocol:
 ### TCP/IP Example
 
 1. Select option `1` for TCP/IP Socket
-2. Enter IP address: `192.168.1.100`
-3. Enter port: `5025`
+2. Choose whether to connect now (y/n)
+3. If connecting now:
+   - Enter IP address: `192.168.1.100`
+   - Enter port: `5025`
 4. Send SCPI commands:
    ```
    > *IDN?
@@ -47,6 +49,14 @@ Select Communication Protocol:
    
    > *RST
    Command sent.
+   
+   > disconnect
+   Disconnected from instrument
+   
+   > connect
+   Enter IP address: 192.168.1.101
+   Enter port: 5025
+   Connected successfully!
    ```
 
 ### VISA Example
@@ -72,12 +82,55 @@ Select Communication Protocol:
 ### Available Commands in Session
 
 - `help` - Show available commands
-- `info` - Display connection information
+- `info` - Display connection information and current EOL sequence
+- `connect` - Connect/reconnect to instrument
+- `disconnect` - Disconnect from current instrument
+- `eol` - Set EOL (End of Line) sequence (default: `\n`)
 - `timeout` - Set timeout (VISA only)
 - `clear` - Clear instrument buffer (VISA only)
-- `exit` - Disconnect and return to menu
+- `exit` - Return to protocol menu
 - `quit` - Exit program
 - Any SCPI command your instrument supports
+
+### Advanced Features
+
+**EOL Sequence Configuration**
+
+By default, commands are terminated with `\n` (newline). You can customize this for instruments with different requirements:
+
+```
+> eol
+Current EOL sequence: \n
+Enter new EOL sequence (use \n, \r, \t for special chars): \r\n
+EOL sequence set to: \r\n
+
+> info
+Connected to: 192.168.1.100:5025
+Type: TCP/IP Socket
+EOL Sequence: \r\n
+```
+
+Supported escape sequences:
+- `\n` - Newline (LF)
+- `\r` - Carriage return (CR)
+- `\t` - Tab
+- `\\` - Backslash
+
+**Connect/Disconnect**
+
+You can disconnect and reconnect without leaving the session:
+
+```
+> disconnect
+Disconnected from instrument
+
+> connect
+--- TCP/IP Socket Configuration ---
+Enter IP address (e.g., 192.168.1.100): 192.168.1.200
+Enter port (e.g., 5025): 5025
+Connecting to 192.168.1.200:5025...
+Connected successfully!
+```
 
 ## Architecture
 

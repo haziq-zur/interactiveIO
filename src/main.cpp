@@ -6,6 +6,9 @@
 #include "tcpip_connection.h"
 #include "visa_connection.h"
 
+// Global EOL sequence configuration
+std::string g_eolSequence = "\n";
+
 void printBanner() {
     std::cout << "=================================================\n";
     std::cout << "  Interactive Instrument Communication Tool\n";
@@ -149,9 +152,12 @@ void printCommandHelp() {
     std::cout << "\nAvailable Commands:\n";
     std::cout << "  help       - Show this help\n";
     std::cout << "  info       - Show connection information\n";
+    std::cout << "  connect    - Connect/reconnect to instrument\n";
+    std::cout << "  disconnect - Disconnect from current instrument\n";
+    std::cout << "  eol        - Set EOL sequence (default: \\n)\n";
     std::cout << "  timeout    - Set timeout (VISA only)\n";
     std::cout << "  clear      - Clear instrument buffer (VISA only)\n";
-    std::cout << "  exit       - Disconnect and return to menu\n";
+    std::cout << "  exit       - Return to protocol menu\n";
     std::cout << "  quit       - Exit program\n";
     std::cout << "\nSCPI Commands:\n";
     std::cout << "  *IDN?      - Query instrument identification\n";
@@ -159,8 +165,42 @@ void printCommandHelp() {
     std::cout << "  (Any SCPI command supported by your instrument)\n";
 }
 
+std::string escapeString(const std::string& str) {
+    std::string result;
+    for (char c : str) {
+        switch (c) {
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            case '\\': result += "\\\\"; break;
+            default: result += c; break;
+        }
+    }
+    return result;
+}
+
+std::string unescapeString(const std::string& str) {
+    std::string result;
+    for (size_t i = 0; i < str.length(); ++i) {
+        if (str[i] == '\\' && i + 1 < str.length()) {
+            switch (str[i + 1]) {
+                case 'n': result += '\n'; i++; break;
+                case 'r': result += '\r'; i++; break;
+                case 't': result += '\t'; i++; break;
+                case '\\': result += '\\'; i++; break;
+                default: result += str[i]; break;
+            }
+        } else {
+            result += str[i];
+        }
+    }
+    return result;
+}
+
 void interactiveSession(IInstrumentConnection* conn) {
-    std::cout << "\n" << conn->getConnectionInfo() << "\n";
+    if (conn->isConnected()) {
+        std::cout << "\n" << conn->getConnectionInfo() << "\n";
+    }
     std::cout << "Type 'help' for available commands\n";
 
     std::string command;
@@ -189,8 +229,58 @@ void interactiveSession(IInstrumentConnection* conn) {
         }
 
         if (command == "info") {
-            std::cout << conn->getConnectionInfo() << "\n";
-            std::cout << "Type: " << conn->getConnectionType() << "\n";
+            if (conn->isConnected()) {
+                std::cout << conn->getConnectionInfo() << "\n";
+                std::cout << "Type: " << conn->getConnectionType() << "\n";
+                std::cout << "EOL Sequence: " << escapeString(g_eolSequence) << "\n";
+            } else {
+                std::cout << "Not connected to any instrument\n";
+                std::cout << "EOL Sequence: " << escapeString(g_eolSequence) << "\n";
+            }
+            continue;
+        }
+
+        if (command == "connect" || command == "reconnect") {
+            if (conn->isConnected()) {
+                std::cout << "Disconnecting from current instrument...\n";
+                conn->disconnect();
+            }
+            
+            TCPIPConnection* tcpipConn = dynamic_cast<TCPIPConnection*>(conn);
+            VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn);
+            
+            bool reconnected = false;
+            if (tcpipConn) {
+                reconnected = setupTCPIPConnection(tcpipConn);
+            } else if (visaConn) {
+                reconnected = setupVISAConnection(visaConn);
+            }
+            
+            if (reconnected) {
+                std::cout << conn->getConnectionInfo() << "\n";
+            }
+            continue;
+        }
+
+        if (command == "disconnect") {
+            if (conn->isConnected()) {
+                conn->disconnect();
+                std::cout << "Disconnected from instrument\n";
+            } else {
+                std::cout << "Not currently connected\n";
+            }
+            continue;
+        }
+
+        if (command == "eol") {
+            std::cout << "Current EOL sequence: " << escapeString(g_eolSequence) << "\n";
+            std::cout << "Enter new EOL sequence (use \\n, \\r, \\t for special chars): ";
+            std::string newEol;
+            std::getline(std::cin, newEol);
+            if (!newEol.empty()) {
+                g_eolSequence = unescapeString(newEol);
+                std::cout << "EOL sequence set to: " << escapeString(g_eolSequence) << "\n";
+            }
             continue;
         }
 
@@ -223,11 +313,25 @@ void interactiveSession(IInstrumentConnection* conn) {
             continue;
         }
 
+        // Check if connected before sending commands
+        if (!conn->isConnected()) {
+            std::cout << "Not connected. Use 'connect' command first.\n";
+            continue;
+        }
+
+        // Add EOL sequence to command
+        std::string cmdWithEol = command + g_eolSequence;
+        
         // Check if it's a query command
         bool isQuery = command.find('?') != std::string::npos;
 
         if (isQuery) {
-            std::string response = conn->query(command);
+            if (!conn->sendCommand(cmdWithEol)) {
+                std::cout << "Send failed: " << conn->getLastError() << "\n";
+                continue;
+            }
+            
+            std::string response = conn->readResponse();
             if (!response.empty()) {
                 std::cout << "Response: " << response;
                 if (response.back() != '\n') {
@@ -242,17 +346,18 @@ void interactiveSession(IInstrumentConnection* conn) {
                 }
             }
         } else {
-            if (conn->sendCommand(command)) {
+            if (conn->sendCommand(cmdWithEol)) {
                 std::cout << "Command sent.\n";
             } else {
                 std::cout << "Send failed: " << conn->getLastError() << "\n";
-                break;
             }
         }
     }
 
-    conn->disconnect();
-    std::cout << "\nDisconnected.\n";
+    if (conn->isConnected()) {
+        conn->disconnect();
+        std::cout << "\nDisconnected.\n";
+    }
 }
 
 int main() {
@@ -277,21 +382,25 @@ int main() {
         }
 
         std::cout << "\nSelected Protocol: " << conn->getConnectionType() << "\n";
-
+        std::cout << "\nConnect now? (y/n, default: y): ";
+        std::string connectChoice;
+        std::getline(std::cin, connectChoice);
+        
         bool connected = false;
-        if (choice == 1) {
-            TCPIPConnection* tcpipConn = dynamic_cast<TCPIPConnection*>(conn.get());
-            connected = setupTCPIPConnection(tcpipConn);
-        } else if (choice == 2) {
-            VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn.get());
-            connected = setupVISAConnection(visaConn);
+        if (connectChoice.empty() || connectChoice == "y" || connectChoice == "Y" || connectChoice == "yes") {
+            if (choice == 1) {
+                TCPIPConnection* tcpipConn = dynamic_cast<TCPIPConnection*>(conn.get());
+                connected = setupTCPIPConnection(tcpipConn);
+            } else if (choice == 2) {
+                VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn.get());
+                connected = setupVISAConnection(visaConn);
+            }
+        } else {
+            std::cout << "\nEntering interactive mode. Use 'connect' command to connect later.\n";
         }
 
-        if (connected) {
-            interactiveSession(conn.get());
-        } else {
-            std::cout << "\nReturning to protocol menu...\n";
-        }
+        // Enter interactive session regardless of connection status
+        interactiveSession(conn.get());
     }
 
     return 0;
