@@ -3,6 +3,88 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+# ============================================================================
+# CMake
+# ============================================================================
+
+# CMake build directory
+build/
+out/
+cmake-build-*/
+
+# CMake cache and generated files
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+compile_commands.json
+
+# Testing
+Testing/
+CTestTestfile.cmake
+
+# ============================================================================
+# C/C++
+# ============================================================================
+
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# ============================================================================
+# Project Specific
+# ============================================================================
+
+# Build output directories
+/build/
+/bin/
+/lib/
+
+# Test executables
+scpi_tests
+scpi_tests.exe
+interactiveIO.exe
+interactiveIO_VISA.exe
+
+# Batch script outputs
+*.log
+
+# ============================================================================
+# Visual Studio / Windows
+# ============================================================================
+
 # User-specific files
 *.rsuser
 *.suo
