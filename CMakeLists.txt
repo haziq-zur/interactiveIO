@@ -6,8 +6,8 @@ project(interactiveIO
     LANGUAGES CXX
 )
 
-# Set C++ standard
-set(CMAKE_CXX_STANDARD 11)
+# Set C++ standard (Qt6 requires C++17)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -123,3 +123,67 @@ install(FILES
 
 # Add unit tests subdirectory
 add_subdirectory(tests)
+
+# =============================================================================
+# Qt6 GUI Application
+# =============================================================================
+
+# Option to build GUI (enabled by default)
+option(BUILD_GUI "Build Qt6 GUI application" ON)
+
+if(BUILD_GUI)
+    # Find Qt6 packages
+    find_package(Qt6 COMPONENTS Core Widgets Test QUIET)
+    
+    if(Qt6_FOUND)
+        message(STATUS "Qt6 found - Building GUI application")
+        
+        # Enable automoc, autouic, and autorcc
+        set(CMAKE_AUTOMOC ON)
+        set(CMAKE_AUTOUIC ON)
+        set(CMAKE_AUTORCC ON)
+        
+        # GUI source files
+        set(GUI_SOURCES
+            gui/main_gui.cpp
+            gui/mainwindow.cpp
+            gui/mainwindow.h
+            gui/mainwindow.ui
+            gui/connectiondialog.cpp
+            gui/connectiondialog.h
+            gui/connectiondialog.ui
+            gui/resources.qrc
+        )
+        
+        # Create GUI executable
+        add_executable(interactiveIO-gui WIN32 ${GUI_SOURCES})
+        
+        # Link against instrument_core library and Qt6
+        target_link_libraries(interactiveIO-gui PRIVATE 
+            instrument_core
+            Qt6::Core
+            Qt6::Widgets
+        )
+        
+        # Include directories
+        target_include_directories(interactiveIO-gui PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+            ${CMAKE_SOURCE_DIR}/gui
+        )
+        
+        # Set output directories
+        set_target_properties(interactiveIO-gui PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
+        )
+        
+        # Installation rules for GUI
+        install(TARGETS interactiveIO-gui
+            RUNTIME DESTINATION bin
+        )
+        
+        message(STATUS "GUI application configured: interactiveIO-gui")
+    else()
+        message(WARNING "Qt6 not found - GUI application will not be built. Install Qt6 to enable GUI.")
+        message(WARNING "Set Qt6_DIR to Qt installation path, e.g., C:/Qt/6.6.1/msvc2019_64")
+    endif()
+endif()

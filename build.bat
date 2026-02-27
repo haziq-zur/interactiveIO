@@ -1,4 +1,5 @@
 @echo off
+SETLOCAL ENABLEDELAYEDEXPANSION
 REM Build script for interactiveIO using CMake
 
 echo ====================================
@@ -51,6 +52,24 @@ echo ====================================
 echo Build Type: %BUILD_TYPE%
 echo Executable location: build\bin\%BUILD_TYPE%\interactiveIO.exe
 echo.
+
+REM Deploy Qt dependencies for GUI if it exists
+if exist "build\bin\%BUILD_TYPE%\interactiveIO-gui.exe" (
+    echo Deploying Qt dependencies for GUI...
+    set QT_PATH=C:\Qt\6.10.2\mingw_64
+    if exist "!QT_PATH!\bin\windeployqt.exe" (
+        "!QT_PATH!\bin\windeployqt.exe" --release --no-translations "build\bin\%BUILD_TYPE%\interactiveIO-gui.exe" >nul 2>&1
+        if errorlevel 1 (
+            echo Warning: Failed to deploy Qt dependencies. Run deploy.bat manually.
+        ) else (
+            echo ✓ Qt dependencies deployed successfully
+            echo GUI location: build\bin\%BUILD_TYPE%\interactiveIO-gui.exe
+        )
+    ) else (
+        echo Warning: windeployqt not found. Run deploy.bat to copy Qt DLLs.
+    )
+    echo.
+)
 
 REM Run tests if requested
 if %RUN_TESTS%==1 (

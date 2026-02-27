@@ -4,12 +4,14 @@ Interactive SCPI instrument communication tool with unified interface supporting
 
 ## Features
 
+- **Dual Interface**: Qt6 GUI and Console applications available
 - **Cross-Platform Support**: Single codebase for Windows and Linux
 - **Unified Application**: Single executable with runtime protocol selection
 - **TCP/IP Communication**: Cross-platform socket communication (Winsock2 on Windows, Berkeley sockets on Linux)
 - **VISA Protocol Support**: Industry-standard VISA for GPIB, USB, VXI-11, and Serial instruments
 - **Dynamic VISA Loading**: Works even without NI-VISA installed (loads library at runtime)
-- **Interactive Menu**: User-friendly protocol selection and configuration
+- **Interactive Interface**: Modern Qt6 GUI with color-coded output and connection dialogs
+- **Console Fallback**: Command-line interface for automation and scripting
 - **Protocol-Specific Features**: Timeout control, buffer clearing, connection management
 - **Comprehensive Testing**: Full unit test coverage with Google Test (56 tests)
 - **Debug Support**: Debug and Release build configurations
@@ -36,7 +38,13 @@ Interactive SCPI instrument communication tool with unified interface supporting
 
 ### Windows
 
-#### Run the Application
+#### GUI Application (Recommended)
+
+```powershell
+.\build\bin\Release\interactiveIO-gui.exe
+```
+
+#### Console Application
 
 ```powershell
 .\build\bin\Release\interactiveIO.exe
@@ -201,8 +209,9 @@ See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for detailed architecture d
 
 ### Prerequisites
 - CMake 3.15 or higher
-- A C++11 compatible compiler (MSVC, MinGW-w64, or Clang)
+- A C++17 compatible compiler (MSVC, MinGW-w64, or Clang)
 - Windows SDK (for Winsock2)
+- **Optional**: Qt6 6.6.1+ (for GUI application) - Download from https://www.qt.io/download-qt-installer
 - **Optional**: NI-VISA or compatible VISA library (for VISA protocol support)
 
 ### Build Instructions
@@ -263,12 +272,36 @@ Examples:
 
 4. **Run the executable:**
    ```bash
-   # Release
+   # GUI Application (if Qt6 is available)
+   .\bin\Release\interactiveIO-gui.exe
+   
+   # Console Application
    .\bin\Release\interactiveIO.exe
    
-   # Debug
+   # Debug builds
+   .\bin\Debug\interactiveIO-gui.exe
    .\bin\Debug\interactiveIO.exe
    ```
+
+5. **Building with Qt6 GUI:**
+   
+   If Qt6 is not automatically detected, specify Qt6_DIR:
+   ```bash
+   cmake .. -DQt6_DIR="C:/Qt/6.6.1/msvc2019_64/lib/cmake/Qt6"
+   ```
+   
+   Or set environment variable:
+   ```powershell
+   $env:Qt6_DIR = "C:\Qt\6.6.1\msvc2019_64"
+   cmake ..
+   ```
+   
+   To build without GUI:
+   ```bash
+   cmake .. -DBUILD_GUI=OFF
+   ```
+   
+   See [GUI_README.md](GUI_README.md) for detailed GUI documentation.
 
 #### Alternative: One-line build command
 ```bash
@@ -450,6 +483,36 @@ interactiveIO/
 - `interactiveIO_visa.cpp` - VISA-based communication (when enabled)
 
 ## Usage
+
+### GUI Application (interactiveIO-gui.exe) ⭐ Recommended
+
+The Qt6-based GUI provides an intuitive interface for instrument communication:
+
+1. **Launch the GUI:**
+   ```powershell
+   cd build\bin\Release
+   .\interactiveIO-gui.exe
+   ```
+
+2. **Connect to an Instrument:**
+   - Select protocol (TCP/IP Socket or VISA)
+   - Click "Connect" button
+   - Enter connection details in the dialog
+   - Click "OK"
+
+3. **Send Commands:**
+   - Type SCPI command in the input field
+   - Press Enter or click "Send"
+   - View responses in the color-coded output window
+
+**Features:**
+- Color-coded output (commands, responses, errors)
+- Timestamped messages
+- Connection status indicator
+- VISA resource string helpers
+- Clear output button
+
+For detailed GUI documentation, see [GUI_README.md](GUI_README.md).
 
 ### TCP/IP Communication (interactiveIO.exe)
 
