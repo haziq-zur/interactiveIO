@@ -3,6 +3,8 @@
 #include "tcpip_connection.h"
 #include "visa_connection.h"
 
+#include <chrono>
+
 namespace iio {
 
 InstrumentController::InstrumentController() = default;
@@ -120,25 +122,41 @@ Result InstrumentController::execute(const std::string& command, int timeoutSeco
     }
 
     const bool isQuery = command.find('?') != std::string::npos;
+    const int effectiveTimeout =
+        (timeoutSeconds < 0) ? settings_.responseTimeoutSeconds : timeoutSeconds;
 
-    if (!connection_->sendCommand(command)) {
+    // Append the configured end-of-line sequence before sending.
+    const std::string payload = command + settings_.eol;
+
+    // Measure the full round trip: from just before the command is sent until
+    // the response (or send acknowledgement) is received.
+    const auto startTime = std::chrono::steady_clock::now();
+    const auto elapsedMs = [&startTime]() {
+        const auto end = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(end - startTime).count();
+    };
+
+    if (!connection_->sendCommand(payload)) {
         lastError_ = connection_->getLastError();
         result.message = "Failed to send command: " + lastError_;
+        result.elapsedMs = elapsedMs();
         return result;
     }
 
     if (!isQuery) {
         result.success = true;
         result.message = "Command sent successfully";
+        result.elapsedMs = elapsedMs();
         return result;
     }
 
-    const std::string response = connection_->readResponse(timeoutSeconds);
+    const std::string response = connection_->readResponse(effectiveTimeout);
     if (response.empty()) {
         lastError_ = connection_->getLastError();
         result.message = lastError_.empty()
             ? "No response received (timeout or error)"
             : "No response received: " + lastError_;
+        result.elapsedMs = elapsedMs();
         // A query that yields no data is reported as a non-fatal failure so the
         // frontend can surface the timeout, while the connection stays open.
         return result;
@@ -148,6 +166,7 @@ Result InstrumentController::execute(const std::string& command, int timeoutSeco
     result.hasResponse = true;
     result.response = response;
     result.message = "Response received";
+    result.elapsedMs = elapsedMs();
     return result;
 }
 
@@ -181,6 +200,22 @@ Result InstrumentController::clearDevice()
     result.success = true;
     result.message = "Instrument buffer cleared";
     return result;
+}
+
+void InstrumentController::setCommunicationSettings(const CommunicationSettings& settings)
+{
+    settings_ = settings;
+
+    // Keep the VISA I/O timeout in sync with the response timeout when a VISA
+    // connection is active (no-op for other transports).
+    if (auto* visa = dynamic_cast<VISAConnection*>(connection_.get())) {
+        visa->setTimeout(static_cast<unsigned int>(settings_.responseTimeoutSeconds) * 1000u);
+    }
+}
+
+const CommunicationSettings& InstrumentController::communicationSettings() const
+{
+    return settings_;
 }
 
 std::string InstrumentController::connectionInfo() const

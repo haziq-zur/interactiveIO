@@ -24,6 +24,21 @@ struct ConnectionConfig {
     int port = 5025;
 };
 
+// User-configurable parameters for the active communication channel. These are
+// applied by the controller to every command it dispatches, so the frontends
+// can expose a single "settings" surface without knowing transport details.
+struct CommunicationSettings {
+    // End-of-line sequence appended to each command before it is sent
+    // (e.g. "\n", "\r", "\r\n", or "" for none).
+    std::string eol = "\n";
+    // Maximum time, in seconds, to wait for a query response.
+    int responseTimeoutSeconds = 10;
+    // When true, the controller measures how long each command takes to
+    // complete (request sent -> response/ack received) and reports it via
+    // Result.elapsedMs. Enabled by default.
+    bool showResponseTime = true;
+};
+
 // Uniform result type returned by every controller operation. This keeps the
 // frontend free of backend error-handling details: it only inspects `success`,
 // shows `message`, and (for queries) reads `response`.
@@ -32,6 +47,7 @@ struct Result {
     std::string message;        // human-readable status / error description
     std::string response;       // instrument reply (queries only)
     bool hasResponse = false;   // true when `response` was populated
+    double elapsedMs = 0.0;     // time to complete the command, in milliseconds
 };
 
 // InstrumentController is the integration layer between the user-facing
@@ -65,10 +81,13 @@ public:
 
     // --- Command dispatch -----------------------------------------------------
 
-    // Sends a single SCPI command. When the command is a query (contains '?'),
-    // the instrument response is read back and returned in Result.response with
+    // Sends a single SCPI command. The configured EOL sequence is appended
+    // before sending. When the command is a query (contains '?'), the
+    // instrument response is read back and returned in Result.response with
     // hasResponse == true. Otherwise only the send outcome is reported.
-    Result execute(const std::string& command, int timeoutSeconds = 10);
+    // Pass a non-negative timeoutSeconds to override the configured response
+    // timeout for this single call; -1 uses the configured value.
+    Result execute(const std::string& command, int timeoutSeconds = -1);
 
     // --- VISA-specific capabilities (no-ops / errors for other protocols) -----
 
@@ -77,6 +96,13 @@ public:
 
     // Clears the instrument's I/O buffers (VISA device clear).
     Result clearDevice();
+
+    // --- Communication settings ----------------------------------------------
+
+    // Replaces the active communication settings (EOL sequence + response
+    // timeout). When connected via VISA, the I/O timeout is updated to match.
+    void setCommunicationSettings(const CommunicationSettings& settings);
+    const CommunicationSettings& communicationSettings() const;
 
     // --- Introspection --------------------------------------------------------
 
@@ -91,6 +117,7 @@ private:
     std::unique_ptr<IInstrumentConnection> connection_;
     Protocol currentProtocol_ = Protocol::TCPIP;
     std::string lastError_;
+    CommunicationSettings settings_;
 };
 
 // Stateless helpers for validating user input and building VISA resource

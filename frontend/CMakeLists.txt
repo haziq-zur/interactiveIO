@@ -45,6 +45,12 @@ if(BUILD_GUI AND Qt6_FOUND)
         gui/connectiondialog.cpp
         gui/connectiondialog.h
         gui/connectiondialog.ui
+        gui/settingsdialog.cpp
+        gui/settingsdialog.h
+        gui/theme.cpp
+        gui/theme.h
+        gui/loadingoverlay.cpp
+        gui/loadingoverlay.h
         gui/logcrypto.cpp
         gui/logcrypto.h
     )

@@ -2,7 +2,7 @@
 #include <QApplication>
 #include <QPushButton>
 #include <QLineEdit>
-#include <QTextEdit>
+#include <QTableWidget>
 #include <QComboBox>
 #include <QTemporaryDir>
 #include <QFile>
@@ -100,7 +100,7 @@ void TestMainWindow::testUIElementsExist()
     QPushButton *sendButton = mainWindow->findChild<QPushButton*>("sendButton");
     QPushButton *clearButton = mainWindow->findChild<QPushButton*>("clearButton");
     QLineEdit *commandInput = mainWindow->findChild<QLineEdit*>("commandInput");
-    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
+    QTableWidget *outputTable = mainWindow->findChild<QTableWidget*>("outputTable");
     QComboBox *protocolCombo = mainWindow->findChild<QComboBox*>("protocolCombo");
     
     // Verify all critical UI elements exist
@@ -109,7 +109,7 @@ void TestMainWindow::testUIElementsExist()
     QVERIFY(sendButton != nullptr);
     QVERIFY(clearButton != nullptr);
     QVERIFY(commandInput != nullptr);
-    QVERIFY(outputText != nullptr);
+    QVERIFY(outputTable != nullptr);
     QVERIFY(protocolCombo != nullptr);
 }
 
@@ -169,32 +169,32 @@ void TestMainWindow::testCommandHistoryLimit()
 
 void TestMainWindow::testOutputAppend()
 {
-    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
-    
-    QVERIFY(outputText != nullptr);
-    QVERIFY(!outputText->toPlainText().isEmpty()); // Should have welcome message
-    
+    QTableWidget *outputTable = mainWindow->findChild<QTableWidget*>("outputTable");
+
+    QVERIFY(outputTable != nullptr);
+    QVERIFY(outputTable->rowCount() > 0); // Should have welcome message rows
+
     // The output should contain the welcome message
-    QString output = outputText->toPlainText();
+    QString output = mainWindow->consoleText();
     QVERIFY(output.contains("Interactive Instrument Communication Tool"));
 }
 
 void TestMainWindow::testClearOutput()
 {
-    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
+    QTableWidget *outputTable = mainWindow->findChild<QTableWidget*>("outputTable");
     QPushButton *clearButton = mainWindow->findChild<QPushButton*>("clearButton");
-    
-    QVERIFY(outputText != nullptr);
+
+    QVERIFY(outputTable != nullptr);
     QVERIFY(clearButton != nullptr);
-    
+
     // Output should initially have content (welcome message)
-    QVERIFY(!outputText->toPlainText().isEmpty());
-    
+    QVERIFY(outputTable->rowCount() > 0);
+
     // Click the clear button
     clearButton->click();
-    
+
     // After clearing, output should only have "Output cleared" message
-    QString output = outputText->toPlainText();
+    QString output = mainWindow->consoleText();
     QVERIFY(output.contains("Output cleared"));
 }
 
@@ -263,8 +263,8 @@ void TestMainWindow::testSaveLogCreatesFile()
 
 void TestMainWindow::testSaveLogIsEncrypted()
 {
-    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
-    QVERIFY(outputText != nullptr);
+    QTableWidget *outputTable = mainWindow->findChild<QTableWidget*>("outputTable");
+    QVERIFY(outputTable != nullptr);
 
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
@@ -300,8 +300,8 @@ void TestMainWindow::testSaveLogEmptyPasswordFails()
 
 void TestMainWindow::testOpenLogDecryptsContent()
 {
-    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
-    QVERIFY(outputText != nullptr);
+    QTableWidget *outputTable = mainWindow->findChild<QTableWidget*>("outputTable");
+    QVERIFY(outputTable != nullptr);
 
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
@@ -310,10 +310,9 @@ void TestMainWindow::testOpenLogDecryptsContent()
     // Save the current console (welcome message) encrypted, then read it back.
     QVERIFY(mainWindow->saveLogToFile(filePath, "p@ssw0rd"));
 
-    outputText->clear();
     QVERIFY(mainWindow->openLogFromFile(filePath, "p@ssw0rd"));
 
-    QString loaded = outputText->toPlainText();
+    QString loaded = mainWindow->consoleText();
     QVERIFY(loaded.contains("Interactive Instrument Communication Tool"));
     QVERIFY(loaded.contains(filePath)); // "Loaded log: <path>" header
 }
@@ -359,8 +358,8 @@ void TestMainWindow::testOpenLogPlaintextFileFails()
 
 void TestMainWindow::testSaveThenOpenRoundTrip()
 {
-    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
-    QVERIFY(outputText != nullptr);
+    QTableWidget *outputTable = mainWindow->findChild<QTableWidget*>("outputTable");
+    QVERIFY(outputTable != nullptr);
 
     QTemporaryDir tempDir;
     QVERIFY(tempDir.isValid());
@@ -372,11 +371,11 @@ void TestMainWindow::testSaveThenOpenRoundTrip()
     QVERIFY(mainWindow->saveLogToFile(filePath, password));
 
     // Clear, then load it back with the same password.
-    outputText->clear();
-    QVERIFY(outputText->toPlainText().isEmpty());
+    mainWindow->findChild<QPushButton*>("clearButton")->click();
+    QVERIFY(!mainWindow->consoleText().contains("Interactive Instrument Communication Tool"));
 
     QVERIFY(mainWindow->openLogFromFile(filePath, password));
-    QVERIFY(outputText->toPlainText().contains("Interactive Instrument Communication Tool"));
+    QVERIFY(mainWindow->consoleText().contains("Interactive Instrument Communication Tool"));
 }
 
 // Qt Test main macro

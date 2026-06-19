@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <sstream>
+#include <iomanip>
 #include <memory>
 
 #include "instrument_controller.h"
@@ -159,6 +160,7 @@ void printCommandHelp() {
     std::cout << "  connect    - Connect/reconnect to instrument\n";
     std::cout << "  disconnect - Disconnect from current instrument\n";
     std::cout << "  eol        - Set EOL sequence (default: \\n)\n";
+    std::cout << "  time       - Toggle showing time to complete (default: on)\n";
     std::cout << "  timeout    - Set timeout (VISA only)\n";
     std::cout << "  clear      - Clear instrument buffer (VISA only)\n";
     std::cout << "  exit       - Return to protocol menu\n";
@@ -202,6 +204,14 @@ std::string unescapeString(const std::string& str) {
 }
 
 void interactiveSession(iio::InstrumentController& controller, iio::Protocol protocol) {
+    // Apply the current EOL preference to the controller, which now owns EOL
+    // handling and appends it to every dispatched command.
+    {
+        iio::CommunicationSettings settings = controller.communicationSettings();
+        settings.eol = g_eolSequence;
+        controller.setCommunicationSettings(settings);
+    }
+
     if (controller.isConnected()) {
         std::cout << "\n" << controller.connectionInfo() << "\n";
     }
@@ -277,8 +287,20 @@ void interactiveSession(iio::InstrumentController& controller, iio::Protocol pro
             std::getline(std::cin, newEol);
             if (!newEol.empty()) {
                 g_eolSequence = unescapeString(newEol);
+                iio::CommunicationSettings settings = controller.communicationSettings();
+                settings.eol = g_eolSequence;
+                controller.setCommunicationSettings(settings);
                 std::cout << "EOL sequence set to: " << escapeString(g_eolSequence) << "\n";
             }
+            continue;
+        }
+
+        if (command == "time") {
+            iio::CommunicationSettings settings = controller.communicationSettings();
+            settings.showResponseTime = !settings.showResponseTime;
+            controller.setCommunicationSettings(settings);
+            std::cout << "Show time to complete: "
+                      << (settings.showResponseTime ? "on" : "off") << "\n";
             continue;
         }
 
@@ -304,10 +326,9 @@ void interactiveSession(iio::InstrumentController& controller, iio::Protocol pro
             continue;
         }
 
-        // Append the configured EOL sequence and dispatch via the controller,
-        // which auto-detects queries and reads back responses.
-        const std::string cmdWithEol = command + g_eolSequence;
-        const iio::Result result = controller.execute(cmdWithEol);
+        // Dispatch via the controller, which appends the configured EOL
+        // sequence, auto-detects queries and reads back responses.
+        const iio::Result result = controller.execute(command);
 
         if (result.hasResponse) {
             std::cout << "Response: " << result.response;
@@ -318,6 +339,12 @@ void interactiveSession(iio::InstrumentController& controller, iio::Protocol pro
             std::cout << "Command sent.\n";
         } else {
             std::cout << result.message << "\n";
+        }
+
+        // Report how long the command took, when enabled in settings.
+        if (controller.communicationSettings().showResponseTime) {
+            std::cout << "Completed in " << std::fixed << std::setprecision(3)
+                      << result.elapsedMs << " ms\n";
         }
     }
 

@@ -79,6 +79,30 @@ TEST(InstrumentControllerTest, InfoIsEmptyWhenDisconnected)
     EXPECT_TRUE(controller.connectionType().empty());
 }
 
+TEST(InstrumentControllerTest, DefaultCommunicationSettings)
+{
+    InstrumentController controller;
+    const iio::CommunicationSettings settings = controller.communicationSettings();
+    EXPECT_EQ(settings.eol, "\n");
+    EXPECT_EQ(settings.responseTimeoutSeconds, 10);
+    EXPECT_TRUE(settings.showResponseTime);
+}
+
+TEST(InstrumentControllerTest, SetCommunicationSettingsArePersisted)
+{
+    InstrumentController controller;
+    iio::CommunicationSettings settings;
+    settings.eol = "\r\n";
+    settings.responseTimeoutSeconds = 30;
+    settings.showResponseTime = false;
+    controller.setCommunicationSettings(settings);
+
+    const iio::CommunicationSettings stored = controller.communicationSettings();
+    EXPECT_EQ(stored.eol, "\r\n");
+    EXPECT_EQ(stored.responseTimeoutSeconds, 30);
+    EXPECT_FALSE(stored.showResponseTime);
+}
+
 // --- resource helpers --------------------------------------------------------
 
 TEST(ControllerResourceTest, ValidatesIpAddresses)

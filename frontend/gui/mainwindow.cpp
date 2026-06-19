@@ -1,8 +1,12 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "connectiondialog.h"
+#include "settingsdialog.h"
 #include "logcrypto.h"
 #include "instrument_controller.h"
+#include "theme.h"
+#include "loadingoverlay.h"
+#include <QApplication>
 #include <QMessageBox>
 #include <QTime>
 #include <QCompleter>
@@ -11,8 +15,18 @@
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
+#include <QPointer>
+#include <QHeaderView>
+#include <QTableWidgetItem>
+#include <QSignalBlocker>
+#include <QColor>
+#include <QClipboard>
+#include <QAction>
+#include <QKeySequence>
+#include <climits>
 #include <chrono>
 #include <ctime>
+#include <thread>
 
 bool MainWindow::s_testMode = false;
 
@@ -35,10 +49,25 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     setupConnections();
+
+    // Load the persisted theme before the first UI-state paint so the status
+    // badge colours match the active theme.
+    currentTheme = theme::loadSavedMode();
+    ui->actionToggleTheme->setChecked(currentTheme == theme::Mode::Light);
+    ui->actionToggleTheme->setText(
+        currentTheme == theme::Mode::Light ? "Dark Mode" : "Light Mode");
+
     updateUIState(false);
     
     // Set window title
     setWindowTitle("Interactive Instrument Communication Tool");
+
+    // Configure the console log table (columns, sizing, filter wiring).
+    setupOutputTable();
+
+    // Animated overlay shown during blocking connect / query operations.
+    loadingOverlay = new LoadingOverlay(centralWidget());
+    loadingOverlay->setDarkMode(currentTheme == theme::Mode::Dark);
     
     // Setup command history completer
     setupCommandHistory();
@@ -47,14 +76,12 @@ MainWindow::MainWindow(QWidget *parent)
     setupTooltips();
     
     // Welcome message
-    appendOutput("Interactive Instrument Communication Tool", "#818cf8");
-    appendOutput("SCPI console  ·  TCP/IP Socket & VISA", "#6b7280");
-    appendOutput("", "#e6e8ec");
-    appendOutput("Quick tips", "#34d399");
-    appendOutput("   •  Select a protocol and click Connect to begin", "#9aa1ad");
-    appendOutput("   •  Use the Up / Down arrows to browse command history", "#9aa1ad");
-    appendOutput("   •  Commands ending with '?' are treated as queries", "#9aa1ad");
-    appendOutput("", "#e6e8ec");
+    appendOutput("Interactive Instrument Communication Tool", theme::Output::Accent);
+    appendOutput("SCPI console  ·  TCP/IP Socket & VISA", theme::Output::Muted);
+    appendOutput("Quick tips", theme::Output::Success);
+    appendOutput("   •  Select a protocol and click Connect to begin", theme::Output::MutedText);
+    appendOutput("   •  Use the Up / Down arrows to browse command history", theme::Output::MutedText);
+    appendOutput("   •  Commands ending with '?' are treated as queries", theme::Output::MutedText);
 }
 
 MainWindow::~MainWindow()
@@ -85,7 +112,67 @@ void MainWindow::setupTooltips()
     ui->sendButton->setToolTip("Send SCPI command to instrument (or press Enter)");
     ui->clearButton->setToolTip("Clear the output display");
     ui->commandInput->setToolTip("Enter SCPI command here\nUse Up/Down arrows to navigate command history\nCommands ending with '?' are queries that expect a response");
-    ui->outputText->setToolTip("Command and response history with timestamps");
+    ui->outputTable->setToolTip("Command and response history with timestamps, instrument and duration");
+    ui->addressFilterCombo->setToolTip("Filter the log by instrument address");
+}
+
+void MainWindow::setupOutputTable()
+{
+    QTableWidget *table = ui->outputTable;
+    table->setColumnCount(4);
+    table->setHorizontalHeaderLabels(
+        QStringList() << "Time" << "Instrument" << "I/O Data" << "Duration");
+
+    table->verticalHeader()->setVisible(false);
+    table->setShowGrid(false);
+    table->setWordWrap(true);
+    table->setTextElideMode(Qt::ElideNone);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    // Allow highlighting individual fields (cells) as well as whole rows so any
+    // part of the log can be selected and copied.
+    table->setSelectionBehavior(QAbstractItemView::SelectItems);
+    table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    table->setAlternatingRowColors(true);
+    table->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+
+    // Copy support: Ctrl+C and a right-click "Copy" action serialize the
+    // selected cells to the clipboard (tab-separated columns, newline rows).
+    QAction *copyAction = new QAction(tr("Copy"), table);
+    copyAction->setShortcut(QKeySequence::Copy);
+    copyAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(copyAction, &QAction::triggered, this, &MainWindow::copySelectionToClipboard);
+    table->addAction(copyAction);
+
+    QAction *selectAllAction = new QAction(tr("Select All"), table);
+    selectAllAction->setShortcut(QKeySequence::SelectAll);
+    selectAllAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(selectAllAction, &QAction::triggered, table, &QTableWidget::selectAll);
+    table->addAction(selectAllAction);
+
+    table->setContextMenuPolicy(Qt::ActionsContextMenu);
+
+    QHeaderView *header = table->horizontalHeader();
+    // Time / Instrument / Duration stay user-resizable; the I/O Data column
+    // stretches to absorb the remaining width so the table tracks the window
+    // size instead of leaving blank space or forcing a horizontal scrollbar.
+    header->setSectionResizeMode(0, QHeaderView::Interactive);
+    header->setSectionResizeMode(1, QHeaderView::Interactive);
+    header->setSectionResizeMode(2, QHeaderView::Stretch);
+    header->setSectionResizeMode(3, QHeaderView::Interactive);
+    header->setStretchLastSection(false);
+    header->setHighlightSections(false);
+    header->setMinimumSectionSize(60);
+    header->setCascadingSectionResizes(true);
+
+    table->setColumnWidth(0, 130);   // Time
+    table->setColumnWidth(1, 160);   // Instrument
+    table->setColumnWidth(3, 110);   // Duration
+
+    // Rows grow to fit wrapped content so long responses stay fully visible.
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+
+    // The Duration column visibility follows the "show response time" setting.
+    table->setColumnHidden(3, !controller->communicationSettings().showResponseTime);
 }
 
 void MainWindow::setupCommandHistory()
@@ -174,21 +261,36 @@ void MainWindow::updateUIState(bool connected)
     ui->protocolCombo->setEnabled(!connected);
     
     if (connected) {
+        const QString color =
+            (currentTheme == theme::Mode::Light) ? "#059669" : "#34d399";
+        const QString bg = (currentTheme == theme::Mode::Light)
+            ? "rgba(5, 150, 105, 0.10)" : "rgba(52, 211, 153, 0.12)";
         ui->statusLabel->setText("●  Connected");
         ui->statusLabel->setStyleSheet(
-            "QLabel#statusLabel { color: #34d399; background-color: rgba(52, 211, 153, 0.12); "
+            "QLabel#statusLabel { color: " + color + "; background-color: " + bg + "; "
             "font-weight: 700; font-size: 9pt; padding: 6px 14px; border-radius: 12px; }");
         statusBar()->showMessage("Connected — ready to send commands");
     } else {
+        const QString color =
+            (currentTheme == theme::Mode::Light) ? "#dc2626" : "#f87171";
+        const QString bg = (currentTheme == theme::Mode::Light)
+            ? "rgba(220, 38, 38, 0.10)" : "rgba(248, 113, 113, 0.12)";
         ui->statusLabel->setText("●  Disconnected");
         ui->statusLabel->setStyleSheet(
-            "QLabel#statusLabel { color: #f87171; background-color: rgba(248, 113, 113, 0.12); "
+            "QLabel#statusLabel { color: " + color + "; background-color: " + bg + "; "
             "font-weight: 700; font-size: 9pt; padding: 6px 14px; border-radius: 12px; }");
         statusBar()->showMessage("Ready — select a protocol and connect to begin");
     }
 }
 
-void MainWindow::appendOutput(const QString& text, const QString& color)
+void MainWindow::appendOutput(const QString& text, theme::Output role)
+{
+    // System / notice rows carry no instrument address and no duration.
+    appendIoRow(QString(), text, QString(), role);
+}
+
+void MainWindow::appendIoRow(const QString& address, const QString& ioData,
+                             const QString& duration, theme::Output role)
 {
     // High-resolution timestamp with microsecond precision (HH:mm:ss.uuuuuu).
     // QTime only resolves to milliseconds, so derive the sub-second part from
@@ -210,14 +312,166 @@ void MainWindow::appendOutput(const QString& text, const QString& color)
                                           localTm.tm_hour, localTm.tm_min, localTm.tm_sec,
                                           static_cast<long long>(micros.count()));
 
-    QString html = QString("<span style='color: #5b6370;'>%1</span>&nbsp;&nbsp;<span style='color: %2;'>%3</span>")
-                   .arg(timestamp, color, text.toHtmlEscaped());
-    ui->outputText->append(html);
+    LogEntry entry{ timestamp, address, ioData, duration, role };
+    logEntries.push_back(entry);
+    registerAddress(address);
+    addEntryRow(entry);
+}
+
+void MainWindow::addEntryRow(const LogEntry& entry)
+{
+    QTableWidget *table = ui->outputTable;
+    const int row = table->rowCount();
+    table->insertRow(row);
+
+    auto makeItem = [](const QString& text, const QString& colorHex) {
+        QTableWidgetItem *item = new QTableWidgetItem(text);
+        item->setForeground(QColor(colorHex));
+        item->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        return item;
+    };
+
+    table->setItem(row, 0, makeItem(entry.timestamp, outColor(theme::Output::Timestamp)));
+    table->setItem(row, 1, makeItem(entry.address, outColor(theme::Output::MutedText)));
+    table->setItem(row, 2, makeItem(entry.ioData, outColor(entry.role)));
+    table->setItem(row, 3, makeItem(entry.duration, outColor(theme::Output::Muted)));
+
+    // Honour the active instrument filter for the freshly added row.
+    const bool all = (ui->addressFilterCombo->currentIndex() <= 0);
+    const QString sel = ui->addressFilterCombo->currentText();
+    const bool show = all || entry.address.isEmpty() || entry.address == sel;
+    table->setRowHidden(row, !show);
+
+    table->scrollToBottom();
+}
+
+void MainWindow::rebuildOutputTable()
+{
+    ui->outputTable->setRowCount(0);
+    for (const LogEntry& entry : logEntries) {
+        addEntryRow(entry);
+    }
+}
+
+void MainWindow::registerAddress(const QString& address)
+{
+    if (address.isEmpty()) {
+        return;
+    }
+    if (ui->addressFilterCombo->findText(address) >= 0) {
+        return;
+    }
+    QSignalBlocker blocker(ui->addressFilterCombo);
+    ui->addressFilterCombo->addItem(address);
+}
+
+void MainWindow::applyAddressFilter()
+{
+    const bool all = (ui->addressFilterCombo->currentIndex() <= 0);
+    const QString sel = ui->addressFilterCombo->currentText();
+    for (int row = 0; row < ui->outputTable->rowCount() && row < logEntries.size(); ++row) {
+        const QString& addr = logEntries[row].address;
+        const bool show = all || addr.isEmpty() || addr == sel;
+        ui->outputTable->setRowHidden(row, !show);
+    }
+}
+
+void MainWindow::on_addressFilterCombo_currentIndexChanged(int index)
+{
+    Q_UNUSED(index);
+    applyAddressFilter();
+}
+
+QString MainWindow::consoleText() const
+{
+    QStringList lines;
+    lines.reserve(logEntries.size());
+    for (const LogEntry& entry : logEntries) {
+        QStringList parts;
+        parts << entry.timestamp;
+        if (!entry.address.isEmpty()) {
+            parts << entry.address;
+        }
+        parts << entry.ioData;
+        if (!entry.duration.isEmpty()) {
+            parts << entry.duration;
+        }
+        lines << parts.join('\t');
+    }
+    return lines.join('\n');
+}
+
+QString MainWindow::outColor(theme::Output role) const
+{
+    return theme::consoleColor(currentTheme, role);
+}
+
+void MainWindow::copySelectionToClipboard() const
+{
+    const QList<QTableWidgetItem*> items = ui->outputTable->selectedItems();
+    if (items.isEmpty()) {
+        return;
+    }
+
+    // Determine the bounding box of the selection so the copied text preserves
+    // the table's row/column layout (tab-separated columns, newline rows).
+    int minRow = INT_MAX, maxRow = -1, minCol = INT_MAX, maxCol = -1;
+    for (const QTableWidgetItem *item : items) {
+        minRow = qMin(minRow, item->row());
+        maxRow = qMax(maxRow, item->row());
+        minCol = qMin(minCol, item->column());
+        maxCol = qMax(maxCol, item->column());
+    }
+
+    QStringList rows;
+    for (int r = minRow; r <= maxRow; ++r) {
+        if (ui->outputTable->isRowHidden(r)) {
+            continue;
+        }
+        QStringList cols;
+        for (int c = minCol; c <= maxCol; ++c) {
+            if (ui->outputTable->isColumnHidden(c)) {
+                continue;
+            }
+            QTableWidgetItem *item = ui->outputTable->item(r, c);
+            cols << (item && item->isSelected() ? item->text() : QString());
+        }
+        rows << cols.join('\t');
+    }
+
+    QApplication::clipboard()->setText(rows.join('\n'));
+}
+
+void MainWindow::runWithLoading(const QString& message,
+                                std::function<iio::Result()> work,
+                                std::function<void(const iio::Result&)> onFinished)
+{
+    // In test mode (no event loop pumping / determinism), run synchronously.
+    if (s_testMode) {
+        onFinished(work());
+        return;
+    }
+
+    loadingOverlay->start(message);
+
+    // Run the blocking controller call off the UI thread so the spinner keeps
+    // animating, then marshal the result back to the UI thread.
+    QPointer<MainWindow> self(this);
+    std::thread([self, work = std::move(work), onFinished = std::move(onFinished)]() mutable {
+        iio::Result result = work();
+        QMetaObject::invokeMethod(qApp, [self, result, onFinished = std::move(onFinished)]() {
+            if (!self) {
+                return;
+            }
+            self->loadingOverlay->stop();
+            onFinished(result);
+        }, Qt::QueuedConnection);
+    }).detach();
 }
 
 void MainWindow::showError(const QString& message)
 {
-    appendOutput("✕  ERROR: " + message, "#f87171");
+    appendOutput("✕  ERROR: " + message, theme::Output::Error);
     if (s_testMode) {
         return;
     }
@@ -225,13 +479,13 @@ void MainWindow::showError(const QString& message)
     msgBox.setIcon(QMessageBox::Critical);
     msgBox.setWindowTitle("Error");
     msgBox.setText(message);
-    msgBox.setStyleSheet("QMessageBox { background-color: #161922; color: #e6e8ec; }");
+    msgBox.setStyleSheet(theme::messageBoxStyleSheet(currentTheme));
     msgBox.exec();
 }
 
 void MainWindow::showSuccess(const QString& message)
 {
-    appendOutput("✓  " + message, "#34d399");
+    appendOutput("✓  " + message, theme::Output::Success);
 }
 
 void MainWindow::on_protocolCombo_currentIndexChanged(int index)
@@ -257,22 +511,28 @@ void MainWindow::on_connectButton_clicked()
         lastAddress = dialog.getAddress();
         lastPort = dialog.getPort();
 
-        appendOutput("Connecting to " + lastAddress + ":" + QString::number(lastPort) + "…", "#60a5fa");
+        const QString target = lastAddress + ":" + QString::number(lastPort);
+        appendOutput("Connecting to " + target + "…", theme::Output::Info);
 
         iio::ConnectionConfig config;
         config.protocol = iio::Protocol::TCPIP;
         config.address = lastAddress.toStdString();
         config.port = lastPort;
 
-        const iio::Result result = controller->connect(config);
-        if (!result.success) {
-            showError(QString::fromStdString(result.message));
-            return;
-        }
-
-        showSuccess("Connected successfully via TCP/IP!");
-        updateUIState(true);
-        ui->commandInput->setFocus();
+        // Connect on a worker thread with an animated overlay so the window
+        // stays responsive while the socket handshake completes.
+        runWithLoading("Connecting to " + lastAddress + "…",
+            [this, config]() { return controller->connect(config); },
+            [this, target](const iio::Result& result) {
+                if (!result.success) {
+                    showError(QString::fromStdString(result.message));
+                    return;
+                }
+                currentAddress = target;
+                showSuccess("Connected successfully via TCP/IP!");
+                updateUIState(true);
+                ui->commandInput->setFocus();
+            });
 
     } else if (protocolIndex == 1) {
         // VISA: check availability via the controller before prompting.
@@ -290,21 +550,24 @@ void MainWindow::on_connectButton_clicked()
 
         lastResourceString = dialog.getResourceString();
 
-        appendOutput("Connecting to " + lastResourceString + "…", "#60a5fa");
+        appendOutput("Connecting to " + lastResourceString + "…", theme::Output::Info);
 
         iio::ConnectionConfig config;
         config.protocol = iio::Protocol::VISA;
         config.address = lastResourceString.toStdString();
 
-        const iio::Result result = controller->connect(config);
-        if (!result.success) {
-            showError(QString::fromStdString(result.message));
-            return;
-        }
-
-        showSuccess("Connected successfully via VISA!");
-        updateUIState(true);
-        ui->commandInput->setFocus();
+        runWithLoading("Connecting to instrument…",
+            [this, config]() { return controller->connect(config); },
+            [this](const iio::Result& result) {
+                if (!result.success) {
+                    showError(QString::fromStdString(result.message));
+                    return;
+                }
+                currentAddress = lastResourceString;
+                showSuccess("Connected successfully via VISA!");
+                updateUIState(true);
+                ui->commandInput->setFocus();
+            });
     }
 }
 
@@ -313,7 +576,8 @@ void MainWindow::on_disconnectButton_clicked()
     const bool wasConnected = controller->isConnected();
     controller->disconnect();
     if (wasConnected) {
-        appendOutput("Disconnected from instrument.", "#fbbf24");
+        appendOutput("Disconnected from instrument.", theme::Output::Warning);
+        currentAddress.clear();
         updateUIState(false);
     }
 }
@@ -337,39 +601,63 @@ void MainWindow::on_commandInput_returnPressed()
     // Add to command history
     addToCommandHistory(command);
     
-    // Display sent command
-    appendOutput("›  " + command, "#818cf8");
-    
-    // Dispatch through the controller (it auto-detects queries and reads back
-    // the response when needed).
-    const iio::Result result = controller->execute(command.toStdString());
+    // Display sent command as an outgoing I/O row.
+    appendIoRow(currentAddress, "›  " + command, QString(), theme::Output::Accent);
 
-    if (!result.success) {
-        if (result.hasResponse || command.contains('?')) {
-            // Query path: surface timeout / error without tearing down the UI.
-            appendOutput(QString::fromStdString(result.message), "#fbbf24");
-        } else {
-            showError(QString::fromStdString(result.message));
-        }
-    } else if (result.hasResponse) {
-        appendOutput("‹  " + QString::fromStdString(result.response), "#34d399");
-    } else {
-        appendOutput("✓  Command sent successfully", "#34d399");
-    }
-    
-    // Clear input field
+    const std::string cmd = command.toStdString();
+    const bool isQuery = command.contains('?');
+    const QString address = currentAddress;
+
+    // Clear the input immediately for snappy feedback.
     ui->commandInput->clear();
+
+    // Queries block until a response (or timeout) arrives, so run them on a
+    // worker thread with the loading overlay. Plain writes return quickly but
+    // use the same path for consistency.
+    const QString busy = isQuery ? "Waiting for response…" : "Sending command…";
+    runWithLoading(busy,
+        [this, cmd]() { return controller->execute(cmd); },
+        [this, isQuery, address](const iio::Result& result) {
+            // Time to complete the request, formatted for the Duration column.
+            const QString duration =
+                QString("%1 ms").arg(result.elapsedMs, 0, 'f', 3);
+
+            if (!result.success) {
+                if (result.hasResponse || isQuery) {
+                    // Query path: surface timeout / error without tearing down the UI.
+                    appendIoRow(address, QString::fromStdString(result.message),
+                                duration, theme::Output::Warning);
+                } else {
+                    showError(QString::fromStdString(result.message));
+                }
+            } else if (result.hasResponse) {
+                appendIoRow(address, "‹  " + QString::fromStdString(result.response),
+                            duration, theme::Output::Success);
+            } else {
+                appendIoRow(address, "✓  Command sent successfully",
+                            duration, theme::Output::Success);
+            }
+        });
 }
 
 void MainWindow::on_clearButton_clicked()
 {
-    ui->outputText->clear();
-    appendOutput("Output cleared.", "#6b7280");
+    ui->outputTable->setRowCount(0);
+    logEntries.clear();
+    {
+        // Reset the instrument filter to just "All Instruments".
+        QSignalBlocker blocker(ui->addressFilterCombo);
+        while (ui->addressFilterCombo->count() > 1) {
+            ui->addressFilterCombo->removeItem(ui->addressFilterCombo->count() - 1);
+        }
+        ui->addressFilterCombo->setCurrentIndex(0);
+    }
+    appendOutput("Output cleared.", theme::Output::Muted);
 }
 
 void MainWindow::on_actionSaveLog_triggered()
 {
-    if (ui->outputText->document()->isEmpty()) {
+    if (logEntries.isEmpty()) {
         showError("There is nothing to save - the log is empty.");
         return;
     }
@@ -417,7 +705,7 @@ bool MainWindow::saveLogToFile(const QString& fileName, const QString& password)
         return false;
     }
 
-    const QByteArray plaintext = ui->outputText->toPlainText().toUtf8();
+    const QByteArray plaintext = consoleText().toUtf8();
     const QByteArray encrypted = LogCrypto::encrypt(plaintext, password);
     if (encrypted.isEmpty()) {
         showError("Encryption failed - the log was not saved.");
@@ -498,12 +786,24 @@ bool MainWindow::openLogFromFile(const QString& fileName, const QString& passwor
 
     const QString contents = QString::fromUtf8(plaintext);
 
-    ui->outputText->clear();
-    appendOutput("Loaded log: " + fileName, "#60a5fa");
-    appendOutput("─────────────────────────────────────────────", "#6b7280");
-    QString escaped = contents.toHtmlEscaped();
-    escaped.replace("\n", "<br>");
-    ui->outputText->append("<span style='color: #e6e8ec;'>" + escaped + "</span>");
+    // Replace the current log with the decrypted content. Each decrypted line
+    // becomes a system row so it renders in the table and is searchable.
+    ui->outputTable->setRowCount(0);
+    logEntries.clear();
+    {
+        QSignalBlocker blocker(ui->addressFilterCombo);
+        while (ui->addressFilterCombo->count() > 1) {
+            ui->addressFilterCombo->removeItem(ui->addressFilterCombo->count() - 1);
+        }
+        ui->addressFilterCombo->setCurrentIndex(0);
+    }
+
+    appendOutput("Loaded log: " + fileName, theme::Output::Info);
+    appendOutput("─────────────────────────────────────────────", theme::Output::Muted);
+    const QStringList loadedLines = contents.split('\n');
+    for (const QString& line : loadedLines) {
+        appendOutput(line, theme::Output::MutedText);
+    }
 
     showSuccess("Log decrypted and loaded successfully.");
     return true;
@@ -511,10 +811,14 @@ bool MainWindow::openLogFromFile(const QString& fileName, const QString& passwor
 
 void MainWindow::on_actionAbout_triggered()
 {
-    QString aboutText = 
+    // Body text colour follows the active theme so it stays readable.
+    const QString bodyColor =
+        (currentTheme == theme::Mode::Light) ? "#1c2029" : "#e6e8ec";
+
+    QString aboutText =
         "<h2 style='color: #818cf8;'>Interactive Instrument Communication Tool</h2>"
-        "<p style='color: #e6e8ec;'><b>Version:</b> 1.0.0</p>"
-        "<p style='color: #e6e8ec;'>A modern GUI application for communicating with SCPI-compatible instruments.</p>"
+        "<p style='color: " + bodyColor + ";'><b>Version:</b> 1.0.0</p>"
+        "<p style='color: " + bodyColor + ";'>A modern GUI application for communicating with SCPI-compatible instruments.</p>"
         "<br>"
         "<p style='color: #34d399;'><b>Supported Protocols:</b></p>"
         "<ul style='color: #9aa1ad;'>"
@@ -524,7 +828,7 @@ void MainWindow::on_actionAbout_triggered()
         "<br>"
         "<p style='color: #34d399;'><b>Features:</b></p>"
         "<ul style='color: #9aa1ad;'>"
-        "<li>Modern dark interface for comfortable viewing</li>"
+        "<li>Light and dark interface themes</li>"
         "<li>Command history with Up/Down arrow navigation</li>"
         "<li>Auto-completion for previously used commands</li>"
         "<li>Timestamped command and response logging</li>"
@@ -538,12 +842,78 @@ void MainWindow::on_actionAbout_triggered()
     aboutBox.setTextFormat(Qt::RichText);
     aboutBox.setText(aboutText);
     aboutBox.setIconPixmap(QPixmap()); // No icon
-    aboutBox.setStyleSheet(
-        "QMessageBox { background-color: #161922; }"
-        "QMessageBox QLabel { color: #e6e8ec; background-color: transparent; }"
-        "QPushButton { background-color: #6366f1; color: white; border: none; "
-        "border-radius: 9px; padding: 9px 20px; min-width: 80px; font-weight: 600; }"
-        "QPushButton:hover { background-color: #7c7ff5; }"
-    );
+    aboutBox.setStyleSheet(theme::messageBoxStyleSheet(currentTheme));
     aboutBox.exec();
+}
+
+void MainWindow::on_actionSettings_triggered()
+{
+    SettingsDialog dialog(this);
+
+    // Populate the dialog from the controller's current settings.
+    const iio::CommunicationSettings current = controller->communicationSettings();
+    dialog.setEolSequence(QString::fromStdString(current.eol));
+    dialog.setResponseTimeout(current.responseTimeoutSeconds);
+    dialog.setShowResponseTime(current.showResponseTime);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    iio::CommunicationSettings updated;
+    updated.eol = dialog.eolSequence().toStdString();
+    updated.responseTimeoutSeconds = dialog.responseTimeout();
+    updated.showResponseTime = dialog.showResponseTime();
+    controller->setCommunicationSettings(updated);
+
+    // The Duration column is shown only when response timing is enabled.
+    ui->outputTable->setColumnHidden(3, !updated.showResponseTime);
+
+    appendOutput("Settings updated  \u00b7  response timeout " +
+                     QString::number(updated.responseTimeoutSeconds) + "s" +
+                     "  \u00b7  response time " +
+                     (updated.showResponseTime ? "on" : "off"),
+                 theme::Output::Info);
+}
+
+void MainWindow::applyTheme(theme::Mode mode)
+{
+    currentTheme = mode;
+
+    // Apply globally so the main window and any open dialogs follow suit.
+    // Fall back to setting it on this window when there is no QApplication
+    // stylesheet owner (e.g. when driven from automated tests).
+    if (qApp) {
+        qApp->setStyleSheet(theme::styleSheet(mode));
+    } else {
+        setStyleSheet(theme::styleSheet(mode));
+    }
+
+    theme::saveMode(mode);
+
+    ui->actionToggleTheme->setChecked(mode == theme::Mode::Light);
+    ui->actionToggleTheme->setText(
+        mode == theme::Mode::Light ? "Dark Mode" : "Light Mode");
+
+    // Keep the loading overlay in step with the theme.
+    if (loadingOverlay) {
+        loadingOverlay->setDarkMode(mode == theme::Mode::Dark);
+    }
+
+    // Re-render the log rows so their colours match the new theme.
+    rebuildOutputTable();
+
+    // Repaint the status badge with theme-appropriate colours.
+    updateUIState(controller && controller->isConnected());
+}
+
+void MainWindow::on_actionToggleTheme_triggered()
+{
+    const theme::Mode next =
+        (currentTheme == theme::Mode::Dark) ? theme::Mode::Light : theme::Mode::Dark;
+    applyTheme(next);
+
+    appendOutput(QString("Switched to %1 mode")
+                     .arg(next == theme::Mode::Light ? "light" : "dark"),
+                 theme::Output::Info);
 }
