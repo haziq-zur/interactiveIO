@@ -137,7 +137,7 @@ void TestMainWindow::testProtocolComboBox()
     QCOMPARE(protocolCombo->count(), 2);
     QCOMPARE(protocolCombo->itemText(0), QString("TCP/IP Socket"));
     QCOMPARE(protocolCombo->itemText(1), QString("VISA"));
-    QCOMPARE(protocolCombo->currentIndex(), 0); // Default should be TCP/IP
+    QCOMPARE(protocolCombo->currentIndex(), 1); // Default should be VISA (VXI-11)
 }
 
 void TestMainWindow::testCommandHistoryNavigation()

@@ -45,10 +45,15 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
     , controller(std::make_unique<iio::InstrumentController>())
     , lastPort(5025)
+    // Default the VISA resource to a VXI-11 (TCPIP INSTR) connection template.
+    , lastResourceString("TCPIP::192.168.1.100::INSTR")
     , commandHistoryIndex(-1)
 {
     ui->setupUi(this);
     setupConnections();
+
+    // Default the protocol selection to VISA (VXI-11 connections).
+    ui->protocolCombo->setCurrentIndex(1);
 
     // Load the persisted theme before the first UI-state paint so the status
     // badge colours match the active theme.
@@ -170,6 +175,14 @@ void MainWindow::setupOutputTable()
 
     // Rows grow to fit wrapped content so long responses stay fully visible.
     table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+
+    // When the I/O Data (stretch) column changes width — e.g. the user resizes
+    // the window — row heights must be recomputed so wrapped long responses are
+    // not clipped or pushed under the neighbouring column.
+    connect(header, &QHeaderView::sectionResized, this,
+            [table](int /*index*/, int /*oldSize*/, int /*newSize*/) {
+                table->resizeRowsToContents();
+            });
 
     // The Duration column visibility follows the "show response time" setting.
     table->setColumnHidden(3, !controller->communicationSettings().showResponseTime);
@@ -328,6 +341,8 @@ void MainWindow::addEntryRow(const LogEntry& entry)
         QTableWidgetItem *item = new QTableWidgetItem(text);
         item->setForeground(QColor(colorHex));
         item->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        // Full text on hover as a fallback for very long, unwrappable content.
+        item->setToolTip(text);
         return item;
     };
 
@@ -341,6 +356,10 @@ void MainWindow::addEntryRow(const LogEntry& entry)
     const QString sel = ui->addressFilterCombo->currentText();
     const bool show = all || entry.address.isEmpty() || entry.address == sel;
     table->setRowHidden(row, !show);
+
+    // Size the row to its (now wrapped) content so long responses are fully
+    // visible rather than overlapping the next column.
+    table->resizeRowToContents(row);
 
     table->scrollToBottom();
 }
@@ -434,7 +453,16 @@ void MainWindow::copySelectionToClipboard() const
                 continue;
             }
             QTableWidgetItem *item = ui->outputTable->item(r, c);
-            cols << (item && item->isSelected() ? item->text() : QString());
+            QString text = (item && item->isSelected()) ? item->text() : QString();
+            // Strip the leading display-only direction markers (› sent, ‹ received)
+            // so the copied data contains only the raw command / response text.
+            if (text.startsWith(QChar(0x203A)) || text.startsWith(QChar(0x2039))) {
+                text = text.mid(1);
+                while (text.startsWith(' ')) {
+                    text.remove(0, 1);
+                }
+            }
+            cols << text;
         }
         rows << cols.join('\t');
     }

@@ -35,9 +35,8 @@ const char *kDarkStyleSheet = R"(
 
     /* ---- Header ----------------------------------------------------------- */
     QFrame#headerBar {
-        background-color: #12141b;
+        background-color: transparent;
         border: none;
-        border-bottom: 1px solid #272d3a;
     }
     QLabel#appMark {
         color: #818cf8;
@@ -66,10 +65,17 @@ const char *kDarkStyleSheet = R"(
     }
 
     /* ---- Cards ------------------------------------------------------------ */
-    QFrame#toolbarCard, QFrame#consoleCard {
-        background-color: #161922;
-        border: 1px solid #272d3a;
-        border-radius: 14px;
+    /* Sections are plain transparent strips (no card box) for a consistent,
+       uncluttered layout. */
+    QFrame#consoleCard {
+        background-color: transparent;
+        border: none;
+    }
+    /* The top toolbar is a plain transparent strip (no card box) so it stays
+       visually consistent with the rest of the window chrome. */
+    QFrame#toolbarCard {
+        background-color: transparent;
+        border: none;
     }
 
     /* ---- Section labels --------------------------------------------------- */
@@ -276,19 +282,18 @@ const char *kDarkStyleSheet = R"(
 
     /* ---- Group boxes (connection dialog) ---------------------------------- */
     QGroupBox {
-        background-color: #161922;
-        border: 1px solid #272d3a;
-        border-radius: 12px;
+        background-color: transparent;
+        border: none;
         margin-top: 14px;
-        padding: 14px;
+        padding: 6px 0 0 0;
         font-weight: 600;
         color: #e6e8ec;
     }
     QGroupBox::title {
         subcontrol-origin: margin;
         subcontrol-position: top left;
-        left: 12px;
-        padding: 2px 6px;
+        left: 0px;
+        padding: 2px 0;
         color: #818cf8;
     }
 
@@ -395,9 +400,8 @@ const char *kLightStyleSheet = R"(
 
     /* ---- Header ----------------------------------------------------------- */
     QFrame#headerBar {
-        background-color: #ffffff;
+        background-color: transparent;
         border: none;
-        border-bottom: 1px solid #e1e4ea;
     }
     QLabel#appMark {
         color: #6366f1;
@@ -426,10 +430,17 @@ const char *kLightStyleSheet = R"(
     }
 
     /* ---- Cards ------------------------------------------------------------ */
-    QFrame#toolbarCard, QFrame#consoleCard {
-        background-color: #ffffff;
-        border: 1px solid #e1e4ea;
-        border-radius: 14px;
+    /* Sections are plain transparent strips (no card box) for a consistent,
+       uncluttered layout. */
+    QFrame#consoleCard {
+        background-color: transparent;
+        border: none;
+    }
+    /* The top toolbar is a plain transparent strip (no card box) so it stays
+       visually consistent with the rest of the window chrome. */
+    QFrame#toolbarCard {
+        background-color: transparent;
+        border: none;
     }
 
     /* ---- Section labels --------------------------------------------------- */
@@ -636,19 +647,18 @@ const char *kLightStyleSheet = R"(
 
     /* ---- Group boxes (connection dialog) ---------------------------------- */
     QGroupBox {
-        background-color: #ffffff;
-        border: 1px solid #e1e4ea;
-        border-radius: 12px;
+        background-color: transparent;
+        border: none;
         margin-top: 14px;
-        padding: 14px;
+        padding: 6px 0 0 0;
         font-weight: 600;
         color: #1c2029;
     }
     QGroupBox::title {
         subcontrol-origin: margin;
         subcontrol-position: top left;
-        left: 12px;
-        padding: 2px 6px;
+        left: 0px;
+        padding: 2px 0;
         color: #6366f1;
     }
 
