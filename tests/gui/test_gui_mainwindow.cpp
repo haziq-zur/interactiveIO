@@ -4,7 +4,7 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QComboBox>
-#include "../gui/mainwindow.h"
+#include "mainwindow.h"
 
 class TestMainWindow : public QObject
 {
@@ -43,6 +43,8 @@ private:
 
 void TestMainWindow::initTestCase()
 {
+    // Suppress modal message boxes so the suite runs without user interaction (CI-safe).
+    MainWindow::setTestMode(true);
     // Setup test case (runs once before all tests)
     qDebug() << "Starting GUI tests...";
 }

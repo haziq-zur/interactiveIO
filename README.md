@@ -8,12 +8,14 @@ Interactive SCPI instrument communication tool with unified interface supporting
 - **Cross-Platform Support**: Single codebase for Windows and Linux
 - **Unified Application**: Single executable with runtime protocol selection
 - **TCP/IP Communication**: Cross-platform socket communication (Winsock2 on Windows, Berkeley sockets on Linux)
-- **VISA Protocol Support**: Industry-standard VISA for GPIB, USB, VXI-11, and Serial instruments
+- **VISA Protocol Support**: Industry-standard VISA for GPIB, **USB**, VXI-11, and Serial instruments
+- **USB Instrument Support**: Quick USB helper for easy Vendor/Product ID configuration
 - **Dynamic VISA Loading**: Works even without NI-VISA installed (loads library at runtime)
-- **Interactive Interface**: Modern Qt6 GUI with color-coded output and connection dialogs
-- **Console Fallback**: Command-line interface for automation and scripting
+- **Modern Dark Mode GUI**: Qt6 interface with color-coded output, tooltips, and connection helpers
+- **Interactive Console**: Command-line interface for automation and scripting
 - **Protocol-Specific Features**: Timeout control, buffer clearing, connection management
-- **Comprehensive Testing**: Full unit test coverage with Google Test (56 tests)
+- **Command History**: Navigate previous commands with Up/Down arrows (GUI)
+- **Comprehensive Testing**: Full unit test coverage with Google Test and Qt Test
 - **Debug Support**: Debug and Release build configurations
 
 ## Platform Support
@@ -506,11 +508,20 @@ The Qt6-based GUI provides an intuitive interface for instrument communication:
    - View responses in the color-coded output window
 
 **Features:**
+- Modern dark mode interface with blue accents
 - Color-coded output (commands, responses, errors)
-- Timestamped messages
-- Connection status indicator
-- VISA resource string helpers
+- Timestamped messages with [HH:MM:SS] format
+- Connection status indicator with visual feedback
+- **VISA resource string helpers:**
+  - TCP/IP VXI-11 (INSTR) helper
+  - TCP/IP Raw Socket helper
+  - GPIB helper with board/address inputs
+  - **USB helper with Vendor/Product ID inputs**
+- Command history navigation (Up/Down arrows)
+- Auto-completion for previously used commands
 - Clear output button
+- Comprehensive tooltips for all controls
+- Status bar with contextual messages
 
 For detailed GUI documentation, see [GUI_README.md](GUI_README.md).
 

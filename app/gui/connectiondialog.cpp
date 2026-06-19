@@ -5,6 +5,18 @@
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
 
+bool ConnectionDialog::s_testMode = false;
+
+void ConnectionDialog::setTestMode(bool enabled)
+{
+    s_testMode = enabled;
+}
+
+bool ConnectionDialog::isTestMode()
+{
+    return s_testMode;
+}
+
 ConnectionDialog::ConnectionDialog(Protocol protocol, QWidget *parent)
     : QDialog(parent)
     , ui(new Ui::ConnectionDialog)
@@ -61,11 +73,10 @@ void ConnectionDialog::setupForVISA()
     
     // Set focus to resource field
     ui->resourceEdit->setFocus();
-    
-    // Connect helper buttons
-    connect(ui->tcpipHelperButton, &QPushButton::clicked, this, &ConnectionDialog::on_tcpipHelperButton_clicked);
-    connect(ui->socketHelperButton, &QPushButton::clicked, this, &ConnectionDialog::on_socketHelperButton_clicked);
-    connect(ui->gpibHelperButton, &QPushButton::clicked, this, &ConnectionDialog::on_gpibHelperButton_clicked);
+
+    // NOTE: The helper-button slots named on_<widget>_clicked() are connected
+    // automatically by QMetaObject::connectSlotsByName() (invoked from setupUi),
+    // so they must not be connected again here or each would fire twice.
 }
 
 QString ConnectionDialog::getAddress() const
@@ -103,19 +114,19 @@ bool ConnectionDialog::validateTCPIP()
     QString ip = ui->ipAddressEdit->text();
     
     if (ip.isEmpty()) {
-        QMessageBox::warning(this, "Validation Error", "IP address cannot be empty.");
+        if (!s_testMode) QMessageBox::warning(this, "Validation Error", "IP address cannot be empty.");
         return false;
     }
     
     // Validate IP address format
     if (!TCPIPUtils::isValidIPAddress(ip.toStdString())) {
-        QMessageBox::warning(this, "Validation Error", "Invalid IP address format.");
+        if (!s_testMode) QMessageBox::warning(this, "Validation Error", "Invalid IP address format.");
         return false;
     }
     
     int port = ui->portSpinBox->value();
     if (port < 1 || port > 65535) {
-        QMessageBox::warning(this, "Validation Error", "Port must be between 1 and 65535.");
+        if (!s_testMode) QMessageBox::warning(this, "Validation Error", "Port must be between 1 and 65535.");
         return false;
     }
     
@@ -127,13 +138,13 @@ bool ConnectionDialog::validateVISA()
     QString resource = ui->resourceEdit->text().trimmed();
     
     if (resource.isEmpty()) {
-        QMessageBox::warning(this, "Validation Error", "Resource string cannot be empty.");
+        if (!s_testMode) QMessageBox::warning(this, "Validation Error", "Resource string cannot be empty.");
         return false;
     }
     
     // Basic validation - check if it contains typical VISA keywords
     if (!resource.contains("::")) {
-        QMessageBox::warning(this, "Validation Error", 
+        if (!s_testMode) QMessageBox::warning(this, "Validation Error", 
                             "Invalid VISA resource string format. Must contain '::' separator.");
         return false;
     }
@@ -169,7 +180,7 @@ void ConnectionDialog::on_tcpipHelperButton_clicked()
 {
     QString ip = ui->helperIpEdit->text();
     if (ip.isEmpty()) {
-        QMessageBox::warning(this, "Input Required", "Please enter an IP address first.");
+        if (!s_testMode) QMessageBox::warning(this, "Input Required", "Please enter an IP address first.");
         return;
     }
     
@@ -183,7 +194,7 @@ void ConnectionDialog::on_socketHelperButton_clicked()
     int port = ui->helperPortSpinBox->value();
     
     if (ip.isEmpty()) {
-        QMessageBox::warning(this, "Input Required", "Please enter an IP address first.");
+        if (!s_testMode) QMessageBox::warning(this, "Input Required", "Please enter an IP address first.");
         return;
     }
     
@@ -198,4 +209,64 @@ void ConnectionDialog::on_gpibHelperButton_clicked()
     
     QString resource = QString("GPIB%1::%2::INSTR").arg(board).arg(address);
     ui->resourceEdit->setText(resource);
+}
+
+void ConnectionDialog::on_usbHelperButton_clicked()
+{
+    QString vendorId = ui->helperVendorIdEdit->text().trimmed();
+    QString productId = ui->helperProductIdEdit->text().trimmed();
+    QString serial = ui->helperSerialEdit->text().trimmed();
+    
+    // Validate vendor and product IDs
+    if (vendorId.isEmpty() || productId.isEmpty()) {
+        if (!s_testMode) QMessageBox::warning(this, "Input Required", 
+                           "Please enter both Vendor ID and Product ID.\n\n"
+                           "Example: 0x1234 for Vendor ID, 0x5678 for Product ID\n"
+                           "Or: 2A8D for hex without prefix");
+        return;
+    }
+    
+    // Convert decimal to hex if needed
+    bool isVidDecimal = false;
+    bool isPidDecimal = false;
+    vendorId.toInt(&isVidDecimal, 10);
+    productId.toInt(&isPidDecimal, 10);
+    
+    // If it's a pure decimal number (no 0x prefix and no hex letters), convert to hex
+    if (isVidDecimal && !vendorId.startsWith("0x", Qt::CaseInsensitive) && 
+        !vendorId.contains(QRegularExpression("[a-fA-F]"))) {
+        int vid = vendorId.toInt();
+        vendorId = QString("0x%1").arg(vid, 4, 16, QChar('0'));
+    }
+    if (isPidDecimal && !productId.startsWith("0x", Qt::CaseInsensitive) && 
+        !productId.contains(QRegularExpression("[a-fA-F]"))) {
+        int pid = productId.toInt();
+        productId = QString("0x%1").arg(pid, 4, 16, QChar('0'));
+    }
+    
+    // Ensure IDs start with 0x prefix if they're just hex digits
+    if (!vendorId.startsWith("0x", Qt::CaseInsensitive)) {
+        vendorId = "0x" + vendorId;
+    }
+    if (!productId.startsWith("0x", Qt::CaseInsensitive)) {
+        productId = "0x" + productId;
+    }
+    
+    // Build USB resource string (correct format: USB0::VID::PID[::SN]::INSTR)
+    QString resource;
+    if (serial.isEmpty()) {
+        // Without serial number
+        resource = QString("USB0::%1::%2::INSTR").arg(vendorId).arg(productId);
+    } else {
+        // With serial number
+        resource = QString("USB0::%1::%2::%3::INSTR").arg(vendorId).arg(productId).arg(serial);
+    }
+    
+    ui->resourceEdit->setText(resource);
+    
+    // Show info message
+    if (!s_testMode) QMessageBox::information(this, "USB Resource String Generated",
+                           QString("Generated resource string:\n%1\n\n"
+                                   "Format: USB0::VendorID::ProductID::SerialNumber::INSTR\n"
+                                   "Do NOT add ::0 before ::INSTR!").arg(resource));
 }

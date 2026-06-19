@@ -1,6 +1,8 @@
 @echo off
 REM Package interactiveIO application for deployment
 REM Creates a standalone distribution package
+REM Run from the repository root regardless of where the script is invoked from
+pushd "%~dp0.."
 
 setlocal
 
@@ -44,8 +46,8 @@ if errorlevel 1 (
 
 REM Copy documentation
 copy /Y README.md "%PACKAGE_DIR%\docs\"
-copy /Y REFACTORING_SUMMARY.md "%PACKAGE_DIR%\docs\" 2>nul
-copy /Y VISA_GUIDE.md "%PACKAGE_DIR%\docs\" 2>nul
+copy /Y docs\VISA_GUIDE.md "%PACKAGE_DIR%\docs\" 2>nul
+copy /Y docs\USB_GUIDE.md "%PACKAGE_DIR%\docs\" 2>nul
 
 REM Create deployment info file
 echo Creating DEPLOYMENT.txt...
@@ -152,3 +154,4 @@ echo.
 echo You can now distribute the ZIP file or the folder.
 
 endlocal
+popd

@@ -7,6 +7,18 @@
 #include <QTime>
 #include <QCompleter>
 
+bool MainWindow::s_testMode = false;
+
+void MainWindow::setTestMode(bool enabled)
+{
+    s_testMode = enabled;
+}
+
+bool MainWindow::isTestMode()
+{
+    return s_testMode;
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -50,18 +62,12 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupConnections()
 {
-    // Connect UI signals to slots
-    connect(ui->connectButton, &QPushButton::clicked, this, &MainWindow::on_connectButton_clicked);
-    connect(ui->disconnectButton, &QPushButton::clicked, this, &MainWindow::on_disconnectButton_clicked);
-    connect(ui->sendButton, &QPushButton::clicked, this, &MainWindow::on_sendButton_clicked);
-    connect(ui->clearButton, &QPushButton::clicked, this, &MainWindow::on_clearButton_clicked);
-    connect(ui->commandInput, &QLineEdit::returnPressed, this, &MainWindow::on_commandInput_returnPressed);
-    connect(ui->protocolCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), 
-            this, &MainWindow::on_protocolCombo_currentIndexChanged);
-    
-    // Connect menu actions
-    connect(ui->actionAbout, &QAction::triggered, this, &MainWindow::on_actionAbout_triggered);
-    
+    // NOTE: The slots named on_<widget>_<signal>() (e.g. on_connectButton_clicked)
+    // are connected automatically by QMetaObject::connectSlotsByName(), which is
+    // invoked from ui->setupUi(this). Connecting them again manually here would
+    // fire each slot twice per signal (e.g. the connection dialog would reopen
+    // immediately after being closed), so only non-auto-connected wiring is done.
+
     // Install event filter for command history navigation
     ui->commandInput->installEventFilter(this);
 }
@@ -186,6 +192,9 @@ void MainWindow::appendOutput(const QString& text, const QString& color)
 void MainWindow::showError(const QString& message)
 {
     appendOutput("❌ ERROR: " + message, "#f48771");
+    if (s_testMode) {
+        return;
+    }
     QMessageBox msgBox(this);
     msgBox.setIcon(QMessageBox::Critical);
     msgBox.setWindowTitle("Error");

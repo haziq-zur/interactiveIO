@@ -1,79 +1,60 @@
-cmake_minimum_required(VERSION 3.15)
+# -----------------------------------------------------------------------------
+# Core (non-GUI) unit tests
+# -----------------------------------------------------------------------------
 
-# Add test executable
 add_executable(scpi_tests
-    test_scpi_utils.cpp
-    test_scpi_connection.cpp
-    test_visa_connection.cpp
+    core/test_scpi_utils.cpp
+    core/test_scpi_connection.cpp
+    core/test_visa_connection.cpp
 )
 
-# Link against Google Test, GMock and the core library
-target_link_libraries(scpi_tests
-    PRIVATE
+target_link_libraries(scpi_tests PRIVATE
     GTest::gtest_main
     GTest::gmock
     instrument_core
 )
 
-# Include directories
-target_include_directories(scpi_tests
-    PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
-
-# Discover tests for CTest
 include(GoogleTest)
 gtest_discover_tests(scpi_tests)
 
-# =============================================================================
-# Qt GUI Tests (only if Qt6 is available)
-# =============================================================================
+# -----------------------------------------------------------------------------
+# Qt GUI tests (only when Qt6 and the GUI library are available)
+# -----------------------------------------------------------------------------
 
-# Find Qt Test module and Widgets
-find_package(Qt6 COMPONENTS Core Widgets Test QUIET)
+if(BUILD_GUI AND Qt6_FOUND AND TARGET interactiveIO_gui)
+    message(STATUS "Qt6 found - Building GUI tests")
 
-if(Qt6Test_FOUND AND Qt6Widgets_FOUND)
-    message(STATUS "Qt6 Test found - Building GUI tests")
-    
-    # Enable Qt features for GUI tests
-    set(CMAKE_AUTOMOC ON)
-    set(CMAKE_AUTOUIC ON)
-    
-    # GUI test sources
-    set(GUI_TEST_SOURCES
-        test_gui_mainwindow.cpp
-        ${CMAKE_SOURCE_DIR}/gui/mainwindow.cpp
-        ${CMAKE_SOURCE_DIR}/gui/mainwindow.h
-        ${CMAKE_SOURCE_DIR}/gui/mainwindow.ui
-        ${CMAKE_SOURCE_DIR}/gui/connectiondialog.cpp
-        ${CMAKE_SOURCE_DIR}/gui/connectiondialog.h
-        ${CMAKE_SOURCE_DIR}/gui/connectiondialog.ui
-    )
-    
-    # Create GUI test executable
-    add_executable(gui_tests ${GUI_TEST_SOURCES})
-    
-    # Link against Qt Test, instrument_core, and Qt6 modules
-    target_link_libraries(gui_tests
-        PRIVATE
-        instrument_core
-        Qt6::Core
-        Qt6::Widgets
+    # MainWindow tests
+    add_executable(gui_tests gui/test_gui_mainwindow.cpp)
+    set_target_properties(gui_tests PROPERTIES AUTOMOC ON)
+    target_link_libraries(gui_tests PRIVATE
+        interactiveIO_gui
         Qt6::Test
     )
-    
-    # Include directories
-    target_include_directories(gui_tests
-        PRIVATE
-        ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/gui
-    )
-    
-    # Add test to CTest
     add_test(NAME GUITests COMMAND gui_tests)
-    
-    message(STATUS "GUI tests configured: gui_tests")
-else()
-    message(STATUS "Qt6 Test not found - GUI tests will not be built")
-endif()
 
+    # ConnectionDialog tests (USB / GPIB helpers, etc.)
+    add_executable(connectiondialog_tests gui/test_gui_connectiondialog.cpp)
+    set_target_properties(connectiondialog_tests PROPERTIES AUTOMOC ON)
+    target_link_libraries(connectiondialog_tests PRIVATE
+        interactiveIO_gui
+        Qt6::Test
+    )
+    add_test(NAME ConnectionDialogTests COMMAND connectiondialog_tests)
+
+    # Run the GUI tests fully headless so they require no display or user
+    # interaction (suitable for CI/CD). The offscreen platform plugin renders
+    # widgets without a window server. QT_QPA_PLATFORM_PLUGIN_PATH points the
+    # test binaries at the Qt installation's platform plugins (qoffscreen),
+    # which is not copied next to the executables by windeployqt.
+    get_filename_component(_qt_prefix "${Qt6_DIR}/../../.." ABSOLUTE)
+    set(_qt_platforms_dir "${_qt_prefix}/plugins/platforms")
+
+    set_tests_properties(GUITests ConnectionDialogTests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_platforms_dir}"
+    )
+
+    message(STATUS "GUI tests configured: gui_tests, connectiondialog_tests")
+else()
+    message(STATUS "Qt6 GUI library not available - GUI tests will not be built")
+endif()

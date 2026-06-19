@@ -1,6 +1,8 @@
 @echo off
 REM Deployment script for interactiveIO GUI application
 REM This script copies Qt dependencies and creates a distributable package
+REM Run from the repository root regardless of where the script is invoked from
+pushd "%~dp0.."
 
 echo ====================================
 echo Deploying interactiveIO GUI
@@ -9,7 +11,7 @@ echo.
 
 set BUILD_DIR=build\bin\Release
 set DEPLOY_DIR=deploy
-set QT_PATH=C:\Qt\6.10.2\mingw_64
+if not defined QT_PATH set "QT_PATH=C:\Qt\6.10.2\mingw_64"
 
 REM Check if executable exists
 if not exist "%BUILD_DIR%\interactiveIO-gui.exe" (
@@ -47,7 +49,7 @@ if "%1"=="package" (
     
     REM Add documentation
     copy README.md "%DEPLOY_DIR%\" >nul 2>&1
-    copy VISA_GUIDE.md "%DEPLOY_DIR%\" >nul 2>&1
+    copy docs\VISA_GUIDE.md "%DEPLOY_DIR%\" >nul 2>&1
     
     echo.
     echo ✓ Deployment package created in %DEPLOY_DIR%\
@@ -64,4 +66,5 @@ echo.
 echo To create a distributable package, run:
 echo   deploy.bat package
 echo.
+popd
 pause

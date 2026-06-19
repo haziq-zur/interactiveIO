@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>500</width>
-    <height>400</height>
+    <height>500</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -189,6 +189,72 @@
              </property>
              <property name="toolTip">
               <string>Create GPIB resource</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_4">
+           <item>
+            <widget class="QLabel" name="helperVendorIdLabel">
+             <property name="text">
+              <string>Vendor ID:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="helperVendorIdEdit">
+             <property name="placeholderText">
+              <string>0x1234</string>
+             </property>
+             <property name="maxLength">
+              <number>6</number>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="helperProductIdLabel">
+             <property name="text">
+              <string>Product ID:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="helperProductIdEdit">
+             <property name="placeholderText">
+              <string>0x5678</string>
+             </property>
+             <property name="maxLength">
+              <number>6</number>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_5">
+           <item>
+            <widget class="QLabel" name="helperSerialLabel">
+             <property name="text">
+              <string>Serial (opt):</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLineEdit" name="helperSerialEdit">
+             <property name="placeholderText">
+              <string>SN123 (optional)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="usbHelperButton">
+             <property name="text">
+              <string>USB</string>
+             </property>
+             <property name="toolTip">
+              <string>Create USB resource string</string>
              </property>
             </widget>
            </item>

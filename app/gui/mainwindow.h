@@ -27,6 +27,11 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    // When enabled, modal message boxes are suppressed so the window can be
+    // driven non-interactively from automated tests / CI.
+    static void setTestMode(bool enabled);
+    static bool isTestMode();
+
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
@@ -42,6 +47,7 @@ private slots:
 private:
     Ui::MainWindow *ui;
     std::unique_ptr<IInstrumentConnection> connection;
+    static bool s_testMode;
     
     void setupConnections();
     void setupCommandHistory();

@@ -22,6 +22,9 @@ CTestTestfile.cmake
 _deps/
 compile_commands.json
 
+# Per-developer CMake preset overrides (CMakePresets.json IS committed)
+CMakeUserPresets.json
+
 # Testing
 Testing/
 CTestTestfile.cmake
