@@ -4,6 +4,10 @@
 #include <QLineEdit>
 #include <QTextEdit>
 #include <QComboBox>
+#include <QTemporaryDir>
+#include <QFile>
+#include <QTextStream>
+#include <QDir>
 #include "mainwindow.h"
 
 class TestMainWindow : public QObject
@@ -29,6 +33,17 @@ private slots:
     // Output Tests
     void testOutputAppend();
     void testClearOutput();
+
+    // Log Save/Open Tests
+    void testSaveLogCreatesFile();
+    void testSaveLogIsEncrypted();
+    void testSaveLogEmptyFileNameFails();
+    void testSaveLogEmptyPasswordFails();
+    void testOpenLogDecryptsContent();
+    void testOpenLogWrongPasswordFails();
+    void testOpenLogMissingFileFails();
+    void testOpenLogPlaintextFileFails();
+    void testSaveThenOpenRoundTrip();
     
     // Widget Styling Tests
     void testDarkModeStylesheet();
@@ -232,6 +247,136 @@ void TestMainWindow::testConnectionStateTransition()
     // Note: We cannot actually test connection without a real instrument
     // This test verifies the UI state management works correctly
     // In a real scenario, we would use mocking to simulate connections
+}
+
+void TestMainWindow::testSaveLogCreatesFile()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    QString filePath = tempDir.filePath("save_creates.log");
+    QVERIFY(!QFile::exists(filePath));
+
+    QVERIFY(mainWindow->saveLogToFile(filePath, "s3cr3t"));
+    QVERIFY(QFile::exists(filePath));
+}
+
+void TestMainWindow::testSaveLogIsEncrypted()
+{
+    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
+    QVERIFY(outputText != nullptr);
+
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    QString filePath = tempDir.filePath("save_encrypted.log");
+    QVERIFY(mainWindow->saveLogToFile(filePath, "s3cr3t"));
+
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QByteArray raw = file.readAll();
+    file.close();
+
+    QVERIFY(!raw.isEmpty());
+    // The file must carry the encrypted-log magic header...
+    QVERIFY(raw.startsWith("IIOLOG1"));
+    // ...and must NOT contain the plaintext welcome message.
+    QVERIFY(!raw.contains("Interactive Instrument Communication Tool"));
+    QVERIFY(!raw.contains("Quick tips"));
+}
+
+void TestMainWindow::testSaveLogEmptyFileNameFails()
+{
+    QVERIFY(!mainWindow->saveLogToFile(QString(), "s3cr3t"));
+}
+
+void TestMainWindow::testSaveLogEmptyPasswordFails()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QString filePath = tempDir.filePath("save_nopwd.log");
+    QVERIFY(!mainWindow->saveLogToFile(filePath, QString()));
+}
+
+void TestMainWindow::testOpenLogDecryptsContent()
+{
+    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
+    QVERIFY(outputText != nullptr);
+
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QString filePath = tempDir.filePath("open_decrypt.log");
+
+    // Save the current console (welcome message) encrypted, then read it back.
+    QVERIFY(mainWindow->saveLogToFile(filePath, "p@ssw0rd"));
+
+    outputText->clear();
+    QVERIFY(mainWindow->openLogFromFile(filePath, "p@ssw0rd"));
+
+    QString loaded = outputText->toPlainText();
+    QVERIFY(loaded.contains("Interactive Instrument Communication Tool"));
+    QVERIFY(loaded.contains(filePath)); // "Loaded log: <path>" header
+}
+
+void TestMainWindow::testOpenLogWrongPasswordFails()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QString filePath = tempDir.filePath("open_wrongpwd.log");
+
+    QVERIFY(mainWindow->saveLogToFile(filePath, "correct-horse"));
+    // Decrypting with the wrong password must fail (bad PKCS#7 padding).
+    QVERIFY(!mainWindow->openLogFromFile(filePath, "battery-staple"));
+}
+
+void TestMainWindow::testOpenLogMissingFileFails()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+
+    QString missing = tempDir.filePath("does_not_exist.log");
+    QVERIFY(!QFile::exists(missing));
+    QVERIFY(!mainWindow->openLogFromFile(missing, "s3cr3t"));
+}
+
+void TestMainWindow::testOpenLogPlaintextFileFails()
+{
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QString filePath = tempDir.filePath("plain.log");
+
+    QFile file(filePath);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    {
+        QTextStream out(&file);
+        out << "this is not an encrypted log";
+    }
+    file.close();
+
+    // A plaintext (non-container) file must be rejected.
+    QVERIFY(!mainWindow->openLogFromFile(filePath, "s3cr3t"));
+}
+
+void TestMainWindow::testSaveThenOpenRoundTrip()
+{
+    QTextEdit *outputText = mainWindow->findChild<QTextEdit*>("outputText");
+    QVERIFY(outputText != nullptr);
+
+    QTemporaryDir tempDir;
+    QVERIFY(tempDir.isValid());
+    QString filePath = tempDir.filePath("round_trip.log");
+
+    const QString password = "round-trip-key";
+
+    // Save the current console (welcome message) encrypted to disk.
+    QVERIFY(mainWindow->saveLogToFile(filePath, password));
+
+    // Clear, then load it back with the same password.
+    outputText->clear();
+    QVERIFY(outputText->toPlainText().isEmpty());
+
+    QVERIFY(mainWindow->openLogFromFile(filePath, password));
+    QVERIFY(outputText->toPlainText().contains("Interactive Instrument Communication Tool"));
 }
 
 // Qt Test main macro

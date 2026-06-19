@@ -79,9 +79,14 @@ endif()
 # Subdirectories
 # -----------------------------------------------------------------------------
 
-add_subdirectory(src)    # instrument_core library
-add_subdirectory(app)    # console + GUI applications
-add_subdirectory(tests)  # unit tests
+# -----------------------------------------------------------------------------
+# Subdirectories (tiered architecture: backend -> controller -> frontend)
+# -----------------------------------------------------------------------------
+
+add_subdirectory(backend)     # BE: instrument_core transport library
+add_subdirectory(controller)  # bridge: instrument_controller library
+add_subdirectory(frontend)    # FE: console + GUI applications
+add_subdirectory(tests)       # unit tests (backend, controller, GUI)
 
 # -----------------------------------------------------------------------------
 # Documentation install

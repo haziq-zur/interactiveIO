@@ -18,6 +18,22 @@ include(GoogleTest)
 gtest_discover_tests(scpi_tests)
 
 # -----------------------------------------------------------------------------
+# Controller unit tests
+# -----------------------------------------------------------------------------
+
+add_executable(controller_tests
+    controller/test_instrument_controller.cpp
+)
+
+target_link_libraries(controller_tests PRIVATE
+    GTest::gtest_main
+    GTest::gmock
+    instrument_controller
+)
+
+gtest_discover_tests(controller_tests)
+
+# -----------------------------------------------------------------------------
 # Qt GUI tests (only when Qt6 and the GUI library are available)
 # -----------------------------------------------------------------------------
 

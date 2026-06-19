@@ -1,4 +1,12 @@
 # -----------------------------------------------------------------------------
+# Frontend (FE): user-facing applications
+#
+# These talk only to the controller (instrument_controller); they never include
+# or link the backend transports directly. This keeps presentation concerns
+# fully isolated from the instrument communication logic.
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 # Console application
 # -----------------------------------------------------------------------------
 
@@ -6,7 +14,7 @@ add_executable(interactiveIO
     console/main.cpp
 )
 
-target_link_libraries(interactiveIO PRIVATE instrument_core)
+target_link_libraries(interactiveIO PRIVATE instrument_controller)
 
 if(WIN32 AND MSVC)
     set_target_properties(interactiveIO PROPERTIES
@@ -37,6 +45,8 @@ if(BUILD_GUI AND Qt6_FOUND)
         gui/connectiondialog.cpp
         gui/connectiondialog.h
         gui/connectiondialog.ui
+        gui/logcrypto.cpp
+        gui/logcrypto.h
     )
 
     set_target_properties(interactiveIO_gui PROPERTIES
@@ -48,8 +58,9 @@ if(BUILD_GUI AND Qt6_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/gui
     )
 
+    # The GUI links the controller (not the backend) plus Qt.
     target_link_libraries(interactiveIO_gui PUBLIC
-        instrument_core
+        instrument_controller
         Qt6::Core
         Qt6::Widgets
     )

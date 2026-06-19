@@ -1,5 +1,9 @@
 # -----------------------------------------------------------------------------
-# instrument_core : transport + platform abstraction library
+# Backend: instrument_core
+#
+# Transport + platform abstraction. Pure C++ with no UI dependency. This is the
+# lowest tier of the architecture (BE); the controller sits on top of it and the
+# frontends never link against it directly.
 # -----------------------------------------------------------------------------
 
 add_library(instrument_core
@@ -9,9 +13,10 @@ add_library(instrument_core
     platform/dynamic_loader.cpp
 )
 
-# Public headers live in the top-level include/ directory.
+# Public headers live in backend/include/ and are propagated to anything that
+# links instrument_core (the controller, and transitively the frontends/tests).
 target_include_directories(instrument_core PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # Platform-specific link dependencies

@@ -13,7 +13,7 @@
 #include <QKeyEvent>
 #include <QPixmap>
 #include <memory>
-#include "instrument_connection.h"
+#include "instrument_controller.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -32,6 +32,13 @@ public:
     static void setTestMode(bool enabled);
     static bool isTestMode();
 
+    // Log persistence. These perform the actual file I/O (independent of the
+    // file dialogs) so they can be exercised directly from automated tests.
+    // The log is encrypted on save with the given password (AES-256-CBC) and
+    // decrypted with the same password on open. Returns true on success.
+    bool saveLogToFile(const QString& fileName, const QString& password);
+    bool openLogFromFile(const QString& fileName, const QString& password);
+
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
 
@@ -43,10 +50,12 @@ private slots:
     void on_commandInput_returnPressed();
     void on_protocolCombo_currentIndexChanged(int index);
     void on_actionAbout_triggered();
+    void on_actionSaveLog_triggered();
+    void on_actionOpenLog_triggered();
 
 private:
     Ui::MainWindow *ui;
-    std::unique_ptr<IInstrumentConnection> connection;
+    std::unique_ptr<iio::InstrumentController> controller;
     static bool s_testMode;
     
     void setupConnections();

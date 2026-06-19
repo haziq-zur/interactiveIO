@@ -1,13 +1,27 @@
 #include <iostream>
 #include <string>
-#include <memory>
 #include <sstream>
-#include "instrument_connection.h"
-#include "tcpip_connection.h"
-#include "visa_connection.h"
+#include <memory>
 
-// Global EOL sequence configuration
-std::string g_eolSequence = "\n";
+#include "instrument_controller.h"
+
+// =============================================================================
+// Console frontend.
+//
+// This application is presentation-only: it parses user input and prints
+// results, but delegates every instrument operation (connect, disconnect,
+// command dispatch, VISA timeout / device-clear) to the InstrumentController.
+// It depends solely on the controller header and never touches the backend
+// transport classes directly.
+// =============================================================================
+
+// Global EOL sequence configuration (frontend input preference).
+static std::string g_eolSequence = "\n";
+
+static std::string protocolName(iio::Protocol protocol)
+{
+    return protocol == iio::Protocol::TCPIP ? "TCP/IP Socket" : "VISA";
+}
 
 void printBanner() {
     std::cout << "=================================================\n";
@@ -24,18 +38,7 @@ void printProtocolMenu() {
     std::cout << "\nChoice: ";
 }
 
-std::unique_ptr<IInstrumentConnection> createConnection(int choice) {
-    switch (choice) {
-        case 1:
-            return std::make_unique<TCPIPConnection>();
-        case 2:
-            return std::make_unique<VISAConnection>();
-        default:
-            return nullptr;
-    }
-}
-
-bool setupTCPIPConnection(TCPIPConnection* conn) {
+bool setupTCPIPConnection(iio::InstrumentController& controller) {
     std::string ip;
     int port;
 
@@ -44,7 +47,7 @@ bool setupTCPIPConnection(TCPIPConnection* conn) {
     std::cin >> ip;
     std::cin.ignore();
 
-    if (!TCPIPUtils::isValidIPAddress(ip)) {
+    if (!iio::resource::isValidIPAddress(ip)) {
         std::cerr << "Invalid IP address format.\n";
         return false;
     }
@@ -59,14 +62,15 @@ bool setupTCPIPConnection(TCPIPConnection* conn) {
     }
 
     std::cout << "Connecting to " << ip << ":" << port << "...\n";
-    
-    if (!conn->initialize()) {
-        std::cerr << "Failed to initialize: " << conn->getLastError() << "\n";
-        return false;
-    }
 
-    if (!conn->connect(ip, port)) {
-        std::cerr << "Failed to connect: " << conn->getLastError() << "\n";
+    iio::ConnectionConfig config;
+    config.protocol = iio::Protocol::TCPIP;
+    config.address = ip;
+    config.port = port;
+
+    const iio::Result result = controller.connect(config);
+    if (!result.success) {
+        std::cerr << result.message << "\n";
         return false;
     }
 
@@ -74,10 +78,10 @@ bool setupTCPIPConnection(TCPIPConnection* conn) {
     return true;
 }
 
-bool setupVISAConnection(VISAConnection* conn) {
+bool setupVISAConnection(iio::InstrumentController& controller) {
     std::cout << "\n--- VISA Configuration ---\n";
-    
-    if (!conn->isAvailable()) {
+
+    if (!controller.isProtocolAvailable(iio::Protocol::VISA)) {
         std::cerr << "VISA library not found!\n";
         std::cerr << "Please install NI-VISA from: https://www.ni.com/visa\n";
         return false;
@@ -102,7 +106,7 @@ bool setupVISAConnection(VISAConnection* conn) {
         return false;
     }
 
-    // Parse helper commands
+    // Parse helper commands.
     std::string resourceString = input;
     std::istringstream iss(input);
     std::string cmd;
@@ -111,40 +115,40 @@ bool setupVISAConnection(VISAConnection* conn) {
     if (cmd == "tcpip") {
         std::string ip;
         iss >> ip;
-        resourceString = VISAUtils::buildTCPIPResource(ip);
+        resourceString = iio::resource::buildTCPIPResource(ip);
         std::cout << "Using resource: " << resourceString << "\n";
     } else if (cmd == "socket") {
         std::string ip;
         int port;
         iss >> ip >> port;
-        resourceString = VISAUtils::buildTCPIPResource(ip, port);
+        resourceString = iio::resource::buildSocketResource(ip, port);
         std::cout << "Using resource: " << resourceString << "\n";
     } else if (cmd == "gpib") {
         int board, address;
         iss >> board >> address;
-        resourceString = VISAUtils::buildGPIBResource(board, address);
+        resourceString = iio::resource::buildGPIBResource(board, address);
         std::cout << "Using resource: " << resourceString << "\n";
     }
 
-    if (!VISAUtils::isValidResourceString(resourceString)) {
+    if (!iio::resource::isValidResourceString(resourceString)) {
         std::cerr << "Invalid VISA resource string format.\n";
         return false;
     }
 
     std::cout << "Connecting to " << resourceString << "...\n";
 
-    if (!conn->initialize()) {
-        std::cerr << "Failed to initialize VISA: " << conn->getLastError() << "\n";
-        return false;
-    }
+    iio::ConnectionConfig config;
+    config.protocol = iio::Protocol::VISA;
+    config.address = resourceString;
 
-    if (!conn->connect(resourceString)) {
-        std::cerr << "Failed to connect: " << conn->getLastError() << "\n";
+    const iio::Result result = controller.connect(config);
+    if (!result.success) {
+        std::cerr << result.message << "\n";
         return false;
     }
 
     std::cout << "Connected successfully!\n";
-    std::cout << "Interface: " << VISAUtils::getInterfaceType(resourceString) << "\n";
+    std::cout << "Interface: " << iio::resource::interfaceType(resourceString) << "\n";
     return true;
 }
 
@@ -197,9 +201,9 @@ std::string unescapeString(const std::string& str) {
     return result;
 }
 
-void interactiveSession(IInstrumentConnection* conn) {
-    if (conn->isConnected()) {
-        std::cout << "\n" << conn->getConnectionInfo() << "\n";
+void interactiveSession(iio::InstrumentController& controller, iio::Protocol protocol) {
+    if (controller.isConnected()) {
+        std::cout << "\n" << controller.connectionInfo() << "\n";
     }
     std::cout << "Type 'help' for available commands\n";
 
@@ -219,7 +223,7 @@ void interactiveSession(IInstrumentConnection* conn) {
         }
 
         if (command == "quit") {
-            conn->disconnect();
+            controller.disconnect();
             exit(0);
         }
 
@@ -229,9 +233,9 @@ void interactiveSession(IInstrumentConnection* conn) {
         }
 
         if (command == "info") {
-            if (conn->isConnected()) {
-                std::cout << conn->getConnectionInfo() << "\n";
-                std::cout << "Type: " << conn->getConnectionType() << "\n";
+            if (controller.isConnected()) {
+                std::cout << controller.connectionInfo() << "\n";
+                std::cout << "Type: " << controller.connectionType() << "\n";
                 std::cout << "EOL Sequence: " << escapeString(g_eolSequence) << "\n";
             } else {
                 std::cout << "Not connected to any instrument\n";
@@ -241,30 +245,24 @@ void interactiveSession(IInstrumentConnection* conn) {
         }
 
         if (command == "connect" || command == "reconnect") {
-            if (conn->isConnected()) {
+            if (controller.isConnected()) {
                 std::cout << "Disconnecting from current instrument...\n";
-                conn->disconnect();
+                controller.disconnect();
             }
-            
-            TCPIPConnection* tcpipConn = dynamic_cast<TCPIPConnection*>(conn);
-            VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn);
-            
-            bool reconnected = false;
-            if (tcpipConn) {
-                reconnected = setupTCPIPConnection(tcpipConn);
-            } else if (visaConn) {
-                reconnected = setupVISAConnection(visaConn);
-            }
-            
+
+            bool reconnected = (protocol == iio::Protocol::TCPIP)
+                ? setupTCPIPConnection(controller)
+                : setupVISAConnection(controller);
+
             if (reconnected) {
-                std::cout << conn->getConnectionInfo() << "\n";
+                std::cout << controller.connectionInfo() << "\n";
             }
             continue;
         }
 
         if (command == "disconnect") {
-            if (conn->isConnected()) {
-                conn->disconnect();
+            if (controller.isConnected()) {
+                controller.disconnect();
                 std::cout << "Disconnected from instrument\n";
             } else {
                 std::cout << "Not currently connected\n";
@@ -285,77 +283,46 @@ void interactiveSession(IInstrumentConnection* conn) {
         }
 
         if (command == "timeout") {
-            VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn);
-            if (visaConn) {
-                unsigned int timeout;
-                std::cout << "Enter timeout in milliseconds: ";
-                std::cin >> timeout;
-                std::cin.ignore();
-                visaConn->setTimeout(timeout);
-                std::cout << "Timeout set to " << timeout << " ms\n";
-            } else {
-                std::cout << "Timeout command only available for VISA connections\n";
-            }
+            unsigned int timeout;
+            std::cout << "Enter timeout in milliseconds: ";
+            std::cin >> timeout;
+            std::cin.ignore();
+            const iio::Result result = controller.setTimeout(timeout);
+            std::cout << result.message << "\n";
             continue;
         }
 
         if (command == "clear") {
-            VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn);
-            if (visaConn) {
-                if (visaConn->clear()) {
-                    std::cout << "Instrument buffer cleared\n";
-                } else {
-                    std::cout << "Clear failed: " << visaConn->getLastError() << "\n";
-                }
-            } else {
-                std::cout << "Clear command only available for VISA connections\n";
-            }
+            const iio::Result result = controller.clearDevice();
+            std::cout << result.message << "\n";
             continue;
         }
 
-        // Check if connected before sending commands
-        if (!conn->isConnected()) {
+        // Check if connected before sending commands.
+        if (!controller.isConnected()) {
             std::cout << "Not connected. Use 'connect' command first.\n";
             continue;
         }
 
-        // Add EOL sequence to command
-        std::string cmdWithEol = command + g_eolSequence;
-        
-        // Check if it's a query command
-        bool isQuery = command.find('?') != std::string::npos;
+        // Append the configured EOL sequence and dispatch via the controller,
+        // which auto-detects queries and reads back responses.
+        const std::string cmdWithEol = command + g_eolSequence;
+        const iio::Result result = controller.execute(cmdWithEol);
 
-        if (isQuery) {
-            if (!conn->sendCommand(cmdWithEol)) {
-                std::cout << "Send failed: " << conn->getLastError() << "\n";
-                continue;
+        if (result.hasResponse) {
+            std::cout << "Response: " << result.response;
+            if (result.response.empty() || result.response.back() != '\n') {
+                std::cout << "\n";
             }
-            
-            std::string response = conn->readResponse();
-            if (!response.empty()) {
-                std::cout << "Response: " << response;
-                if (response.back() != '\n') {
-                    std::cout << "\n";
-                }
-            } else {
-                std::string error = conn->getLastError();
-                if (!error.empty()) {
-                    std::cout << "Error: " << error << "\n";
-                } else {
-                    std::cout << "(No response received)\n";
-                }
-            }
+        } else if (result.success) {
+            std::cout << "Command sent.\n";
         } else {
-            if (conn->sendCommand(cmdWithEol)) {
-                std::cout << "Command sent.\n";
-            } else {
-                std::cout << "Send failed: " << conn->getLastError() << "\n";
-            }
+            std::cout << result.message << "\n";
         }
     }
 
-    if (conn->isConnected()) {
-        conn->disconnect();
+    if (controller.isConnected()) {
+        controller.disconnect();
         std::cout << "\nDisconnected.\n";
     }
 }
@@ -365,7 +332,7 @@ int main() {
 
     while (true) {
         printProtocolMenu();
-        
+
         int choice;
         std::cin >> choice;
         std::cin.ignore();
@@ -375,32 +342,33 @@ int main() {
             break;
         }
 
-        auto conn = createConnection(choice);
-        if (!conn) {
+        if (choice != 1 && choice != 2) {
             std::cerr << "Invalid choice. Please try again.\n";
             continue;
         }
 
-        std::cout << "\nSelected Protocol: " << conn->getConnectionType() << "\n";
+        const iio::Protocol protocol =
+            (choice == 1) ? iio::Protocol::TCPIP : iio::Protocol::VISA;
+
+        iio::InstrumentController controller;
+
+        std::cout << "\nSelected Protocol: " << protocolName(protocol) << "\n";
         std::cout << "\nConnect now? (y/n, default: y): ";
         std::string connectChoice;
         std::getline(std::cin, connectChoice);
-        
-        bool connected = false;
+
         if (connectChoice.empty() || connectChoice == "y" || connectChoice == "Y" || connectChoice == "yes") {
-            if (choice == 1) {
-                TCPIPConnection* tcpipConn = dynamic_cast<TCPIPConnection*>(conn.get());
-                connected = setupTCPIPConnection(tcpipConn);
-            } else if (choice == 2) {
-                VISAConnection* visaConn = dynamic_cast<VISAConnection*>(conn.get());
-                connected = setupVISAConnection(visaConn);
+            if (protocol == iio::Protocol::TCPIP) {
+                setupTCPIPConnection(controller);
+            } else {
+                setupVISAConnection(controller);
             }
         } else {
             std::cout << "\nEntering interactive mode. Use 'connect' command to connect later.\n";
         }
 
-        // Enter interactive session regardless of connection status
-        interactiveSession(conn.get());
+        // Enter interactive session regardless of connection status.
+        interactiveSession(controller, protocol);
     }
 
     return 0;
