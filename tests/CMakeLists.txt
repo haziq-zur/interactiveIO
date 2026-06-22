@@ -34,6 +34,25 @@ target_link_libraries(controller_tests PRIVATE
 gtest_discover_tests(controller_tests)
 
 # -----------------------------------------------------------------------------
+# REST API unit tests (only when the API library is available)
+# -----------------------------------------------------------------------------
+
+if(BUILD_API AND TARGET interactiveIO_api)
+    add_executable(api_tests
+        api/test_api_serialization.cpp
+    )
+
+    target_link_libraries(api_tests PRIVATE
+        GTest::gtest_main
+        interactiveIO_api
+    )
+
+    gtest_discover_tests(api_tests)
+
+    message(STATUS "REST API tests configured: api_tests")
+endif()
+
+# -----------------------------------------------------------------------------
 # Qt GUI tests (only when Qt6 and the GUI library are available)
 # -----------------------------------------------------------------------------
 

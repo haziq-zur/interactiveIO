@@ -5,6 +5,7 @@ Interactive SCPI instrument communication tool with unified interface supporting
 ## Features
 
 - **Dual Interface**: Qt6 GUI and Console applications available
+- **REST API**: HTTP server exposing the instrument controller for CLI/automation (curl, scripts, CI)
 - **Cross-Platform Support**: Single codebase for Windows and Linux
 - **Unified Application**: Single executable with runtime protocol selection
 - **TCP/IP Communication**: Cross-platform socket communication (Winsock2 on Windows, Berkeley sockets on Linux)
@@ -51,6 +52,14 @@ Interactive SCPI instrument communication tool with unified interface supporting
 ```powershell
 .\build\bin\Release\interactiveIO.exe
 ```
+
+#### REST API Server
+
+```powershell
+.\build\bin\Release\interactiveIO-api.exe --port 8080
+```
+
+Then drive the instrument from any HTTP client (see [REST API](#rest-api)).
 
 **Or create a distribution package:**
 
@@ -191,6 +200,134 @@ Connecting to 192.168.1.200:5025...
 Connected successfully!
 ```
 
+## REST API
+
+The REST API exposes the same instrument controller used by the GUI and console
+over HTTP, so the application can be driven from the command line, scripts, or
+any HTTP client. It is built by default (disable with `-DBUILD_API=OFF`).
+
+### Starting the Server
+
+```powershell
+# Windows
+.\build\bin\Release\interactiveIO-api.exe --host 127.0.0.1 --port 8080
+```
+
+```bash
+# Linux
+./build/bin/interactiveIO-api --host 127.0.0.1 --port 8080
+```
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `--host <address>` | Interface to bind | `127.0.0.1` |
+| `--port <port>` | TCP port to listen on | `8080` |
+| `--help` | Show usage and exit | — |
+
+Press `Ctrl+C` to stop the server.
+
+### Endpoints
+
+| Method | Path | Description | Request body |
+| --- | --- | --- | --- |
+| `GET` | `/api/health` | Liveness probe | — |
+| `GET` | `/api/status` | Connection state | — |
+| `POST` | `/api/connect` | Open a connection | `{"protocol":"tcpip"\|"visa","address":...,"port":...}` |
+| `POST` | `/api/disconnect` | Close the connection | — |
+| `POST` | `/api/command` | Send a SCPI command | `{"command":"*IDN?","timeoutSeconds":5}` |
+| `POST` | `/api/clear` | VISA device clear | — |
+| `POST` | `/api/timeout` | Set VISA I/O timeout | `{"timeoutMs":2000}` |
+| `GET` | `/api/settings` | Read communication settings | — |
+| `PUT` | `/api/settings` | Update settings | `{"eol":"\n","responseTimeoutSeconds":10,"showResponseTime":true}` |
+
+For `connect`, use `"protocol":"tcpip"` with `address`/`port`, or
+`"protocol":"visa"` with `address` set to the full VISA resource string
+(e.g. `TCPIP::192.168.1.100::INSTR`). `timeoutSeconds` is optional and overrides
+the configured response timeout for a single command.
+
+### Response Format
+
+Every instrument operation returns a JSON body built from the controller's
+structured result:
+
+```json
+{
+  "success": true,
+  "message": "Response received",
+  "response": "Keysight,34470A,MY12345678,A.02.17",
+  "elapsedMs": 14.382,
+  "code": "None",
+  "severity": "INFO"
+}
+```
+
+Failures carry a machine-readable `code`, a `severity`, and a ready-to-display
+`error` string, and the HTTP status reflects the error class:
+
+```json
+{
+  "success": false,
+  "message": "Not connected",
+  "elapsedMs": 0.0,
+  "code": "NotConnected",
+  "severity": "ERROR",
+  "error": "[ERROR] NotConnected: Not connected"
+}
+```
+
+| HTTP status | Meaning | Error codes |
+| --- | --- | --- |
+| `200` | Success | `None` |
+| `400` | Bad request | `InvalidInput` |
+| `409` | Conflict (no active connection) | `NotConnected` |
+| `422` | Unprocessable | `UnsupportedProtocol`, `OperationUnsupported` |
+| `502` | Upstream/instrument failure | `ConnectionFailed`, `InitializationFailed`, `SendFailed`, `ClearFailed` |
+| `503` | Service unavailable | `ProtocolUnavailable` |
+| `504` | Gateway timeout (no reply) | `NoResponse` |
+
+### Examples
+
+```bash
+# Check the server is up
+curl http://127.0.0.1:8080/api/health
+
+# Connect over TCP/IP
+curl -X POST http://127.0.0.1:8080/api/connect \
+     -H "Content-Type: application/json" \
+     -d '{"protocol":"tcpip","address":"192.168.1.100","port":5025}'
+
+# Connect over VISA (VXI-11)
+curl -X POST http://127.0.0.1:8080/api/connect \
+     -H "Content-Type: application/json" \
+     -d '{"protocol":"visa","address":"TCPIP::192.168.1.100::INSTR"}'
+
+# Query the instrument identity
+curl -X POST http://127.0.0.1:8080/api/command \
+     -H "Content-Type: application/json" \
+     -d '{"command":"*IDN?"}'
+
+# Inspect / update settings
+curl http://127.0.0.1:8080/api/settings
+curl -X PUT http://127.0.0.1:8080/api/settings \
+     -H "Content-Type: application/json" \
+     -d '{"eol":"\r\n","responseTimeoutSeconds":15}'
+
+# Disconnect
+curl -X POST http://127.0.0.1:8080/api/disconnect
+```
+
+```powershell
+# PowerShell equivalents
+Invoke-RestMethod http://127.0.0.1:8080/api/health
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/connect `
+  -ContentType "application/json" `
+  -Body '{"protocol":"tcpip","address":"192.168.1.100","port":5025}'
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/command `
+  -ContentType "application/json" -Body '{"command":"*IDN?"}'
+```
+
 ## Architecture
 
 The project uses a clean interface-based architecture:
@@ -213,6 +350,7 @@ See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for detailed architecture d
 - CMake 3.15 or higher
 - A C++17 compatible compiler (MSVC, MinGW-w64, or Clang)
 - Windows SDK (for Winsock2)
+- **Network access on first configure**: the REST API fetches `cpp-httplib` and `nlohmann/json` via CMake `FetchContent` (same as Google Test). Disable the API with `-DBUILD_API=OFF` to build offline.
 - **Optional**: Qt6 6.6.1+ (for GUI application) - Download from https://www.qt.io/download-qt-installer
 - **Optional**: NI-VISA or compatible VISA library (for VISA protocol support)
 

@@ -90,3 +90,48 @@ if(BUILD_GUI AND Qt6_FOUND)
 
     message(STATUS "GUI application configured: interactiveIO-gui")
 endif()
+
+# -----------------------------------------------------------------------------
+# REST API application (optional)
+# -----------------------------------------------------------------------------
+
+if(BUILD_API)
+    # Shared API library so the routes/serialisers can be reused by unit tests
+    # without recompiling them into every test target.
+    add_library(interactiveIO_api STATIC
+        api/rest_server.cpp
+        api/rest_server.h
+    )
+
+    target_include_directories(interactiveIO_api PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/api
+    )
+
+    # The API links the controller (not the backend) plus the HTTP/JSON libs.
+    target_link_libraries(interactiveIO_api PUBLIC
+        instrument_controller
+        httplib::httplib
+        nlohmann_json::nlohmann_json
+    )
+
+    add_executable(interactiveIO-api
+        api/main_api.cpp
+    )
+
+    target_link_libraries(interactiveIO-api PRIVATE interactiveIO_api)
+
+    if(WIN32 AND MSVC)
+        set_target_properties(interactiveIO-api PROPERTIES
+            LINK_FLAGS "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+
+    if(STATIC_RUNTIME AND MINGW)
+        target_link_options(interactiveIO-api PRIVATE -static)
+    endif()
+
+    install(TARGETS interactiveIO-api RUNTIME DESTINATION bin)
+
+    message(STATUS "REST API application configured: interactiveIO-api")
+endif()
+
