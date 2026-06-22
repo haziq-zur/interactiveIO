@@ -6,6 +6,7 @@
 #include "instrument_controller.h"
 #include "theme.h"
 #include "loadingoverlay.h"
+#include "errorhandler.h"
 #include <QApplication>
 #include <QMessageBox>
 #include <QTime>
@@ -73,6 +74,16 @@ MainWindow::MainWindow(QWidget *parent)
     // Animated overlay shown during blocking connect / query operations.
     loadingOverlay = new LoadingOverlay(centralWidget());
     loadingOverlay->setDarkMode(currentTheme == theme::Mode::Dark);
+
+    // Route all controller failures through a single severity-aware handler so
+    // the console logging and modal dialogs stay consistent. The logger writes
+    // each error line to the console table; dialogs are suppressed in tests.
+    errorHandler = std::make_unique<ErrorHandler>(
+        this, [this](const QString& text, theme::Output role) {
+            appendOutput(text, role);
+        });
+    errorHandler->setTheme(currentTheme);
+    errorHandler->setSilentDialogs(s_testMode);
     
     // Setup command history completer
     setupCommandHistory();
@@ -499,6 +510,12 @@ void MainWindow::runWithLoading(const QString& message,
 
 void MainWindow::showError(const QString& message)
 {
+    // Route ad-hoc (non-controller) errors through the central handler so the
+    // console styling and modal dialog behaviour stay consistent.
+    if (errorHandler) {
+        errorHandler->reportError(message);
+        return;
+    }
     appendOutput("✕  ERROR: " + message, theme::Output::Error);
     if (s_testMode) {
         return;
@@ -553,7 +570,7 @@ void MainWindow::on_connectButton_clicked()
             [this, config]() { return controller->connect(config); },
             [this, target](const iio::Result& result) {
                 if (!result.success) {
-                    showError(QString::fromStdString(result.message));
+                    errorHandler->handle(result);
                     return;
                 }
                 currentAddress = target;
@@ -588,7 +605,7 @@ void MainWindow::on_connectButton_clicked()
             [this, config]() { return controller->connect(config); },
             [this](const iio::Result& result) {
                 if (!result.success) {
-                    showError(QString::fromStdString(result.message));
+                    errorHandler->handle(result);
                     return;
                 }
                 currentAddress = lastResourceString;
@@ -654,9 +671,9 @@ void MainWindow::on_commandInput_returnPressed()
                 if (result.hasResponse || isQuery) {
                     // Query path: surface timeout / error without tearing down the UI.
                     appendIoRow(address, QString::fromStdString(result.message),
-                                duration, theme::Output::Warning);
+                                duration, ErrorHandler::roleFor(result.severity));
                 } else {
-                    showError(QString::fromStdString(result.message));
+                    errorHandler->handle(result);
                 }
             } else if (result.hasResponse) {
                 appendIoRow(address, "‹  " + QString::fromStdString(result.response),
@@ -926,6 +943,11 @@ void MainWindow::applyTheme(theme::Mode mode)
     // Keep the loading overlay in step with the theme.
     if (loadingOverlay) {
         loadingOverlay->setDarkMode(mode == theme::Mode::Dark);
+    }
+
+    // Keep the error handler's dialogs themed to match.
+    if (errorHandler) {
+        errorHandler->setTheme(mode);
     }
 
     // Re-render the log rows so their colours match the new theme.

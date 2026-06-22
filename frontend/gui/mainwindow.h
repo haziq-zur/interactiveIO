@@ -23,6 +23,7 @@ namespace Ui { class MainWindow; }
 QT_END_NAMESPACE
 
 class LoadingOverlay;
+class ErrorHandler;
 
 class MainWindow : public QMainWindow
 {
@@ -127,6 +128,9 @@ private:
 
     // Animated busy overlay shown during blocking operations.
     LoadingOverlay *loadingOverlay;
+
+    // Centralised severity-aware error presentation (console + modal dialogs).
+    std::unique_ptr<ErrorHandler> errorHandler;
 
     // Backing store for the console log table rows.
     QVector<LogEntry> logEntries;

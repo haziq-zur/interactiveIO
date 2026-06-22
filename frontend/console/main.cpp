@@ -24,6 +24,19 @@ static std::string protocolName(iio::Protocol protocol)
     return protocol == iio::Protocol::TCPIP ? "TCP/IP Socket" : "VISA";
 }
 
+// Prints a failed controller result with its severity + structured error code,
+// e.g. "[ERROR] ConnectionFailed: Failed to connect: ...". Errors go to stderr,
+// warnings / info to stdout so recoverable conditions don't look like failures.
+static void reportResult(const iio::Result& result)
+{
+    if (result.success) {
+        return;
+    }
+    std::ostream& out =
+        (result.severity == iio::Severity::Error) ? std::cerr : std::cout;
+    out << iio::error::format(result) << "\n";
+}
+
 void printBanner() {
     std::cout << "=================================================\n";
     std::cout << "  Interactive Instrument Communication Tool\n";
@@ -71,7 +84,7 @@ bool setupTCPIPConnection(iio::InstrumentController& controller) {
 
     const iio::Result result = controller.connect(config);
     if (!result.success) {
-        std::cerr << result.message << "\n";
+        reportResult(result);
         return false;
     }
 
@@ -144,7 +157,7 @@ bool setupVISAConnection(iio::InstrumentController& controller) {
 
     const iio::Result result = controller.connect(config);
     if (!result.success) {
-        std::cerr << result.message << "\n";
+        reportResult(result);
         return false;
     }
 
@@ -310,13 +323,21 @@ void interactiveSession(iio::InstrumentController& controller, iio::Protocol pro
             std::cin >> timeout;
             std::cin.ignore();
             const iio::Result result = controller.setTimeout(timeout);
-            std::cout << result.message << "\n";
+            if (result.success) {
+                std::cout << result.message << "\n";
+            } else {
+                reportResult(result);
+            }
             continue;
         }
 
         if (command == "clear") {
             const iio::Result result = controller.clearDevice();
-            std::cout << result.message << "\n";
+            if (result.success) {
+                std::cout << result.message << "\n";
+            } else {
+                reportResult(result);
+            }
             continue;
         }
 
@@ -338,7 +359,7 @@ void interactiveSession(iio::InstrumentController& controller, iio::Protocol pro
         } else if (result.success) {
             std::cout << "Command sent.\n";
         } else {
-            std::cout << result.message << "\n";
+            reportResult(result);
         }
 
         // Report how long the command took, when enabled in settings.

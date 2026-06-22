@@ -51,6 +51,8 @@ if(BUILD_GUI AND Qt6_FOUND)
         gui/theme.h
         gui/loadingoverlay.cpp
         gui/loadingoverlay.h
+        gui/errorhandler.cpp
+        gui/errorhandler.h
         gui/logcrypto.cpp
         gui/logcrypto.h
     )

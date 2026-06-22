@@ -6,6 +6,8 @@ using iio::InstrumentController;
 using iio::ConnectionConfig;
 using iio::Protocol;
 using iio::Result;
+using iio::ErrorCode;
+using iio::Severity;
 
 // The controller is exercised without a real instrument, so these tests focus
 // on its state machine and the structured results it returns, rather than on
@@ -30,6 +32,8 @@ TEST(InstrumentControllerTest, ExecuteWhenDisconnectedFails)
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.hasResponse);
     EXPECT_FALSE(result.message.empty());
+    EXPECT_EQ(result.code, ErrorCode::NotConnected);
+    EXPECT_EQ(result.severity, Severity::Error);
 }
 
 TEST(InstrumentControllerTest, DisconnectWhenNotConnectedIsSafe)
@@ -52,6 +56,8 @@ TEST(InstrumentControllerTest, ConnectToUnreachableTcpipReportsFailure)
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(controller.isConnected());
     EXPECT_FALSE(result.message.empty());
+    EXPECT_EQ(result.code, ErrorCode::ConnectionFailed);
+    EXPECT_EQ(result.severity, Severity::Error);
     // The controller tracks the selected protocol even on failure.
     EXPECT_EQ(controller.currentProtocol(), Protocol::TCPIP);
 }
@@ -62,6 +68,8 @@ TEST(InstrumentControllerTest, SetTimeoutWithoutVisaConnectionFails)
     const Result result = controller.setTimeout(2000);
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.message.empty());
+    EXPECT_EQ(result.code, ErrorCode::OperationUnsupported);
+    EXPECT_EQ(result.severity, Severity::Warning);
 }
 
 TEST(InstrumentControllerTest, ClearDeviceWithoutVisaConnectionFails)
@@ -70,6 +78,8 @@ TEST(InstrumentControllerTest, ClearDeviceWithoutVisaConnectionFails)
     const Result result = controller.clearDevice();
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.message.empty());
+    EXPECT_EQ(result.code, ErrorCode::OperationUnsupported);
+    EXPECT_EQ(result.severity, Severity::Warning);
 }
 
 TEST(InstrumentControllerTest, InfoIsEmptyWhenDisconnected)
@@ -125,4 +135,42 @@ TEST(ControllerResourceTest, ValidatesResourceStrings)
 {
     EXPECT_TRUE(iio::resource::isValidResourceString("TCPIP::192.168.1.100::INSTR"));
     EXPECT_FALSE(iio::resource::isValidResourceString("garbage"));
+}
+
+// --- structured error reporting ---------------------------------------------
+
+TEST(ControllerErrorTest, CodeLabelsAreStable)
+{
+    EXPECT_STREQ(iio::error::codeLabel(ErrorCode::None), "None");
+    EXPECT_STREQ(iio::error::codeLabel(ErrorCode::NotConnected), "NotConnected");
+    EXPECT_STREQ(iio::error::codeLabel(ErrorCode::ConnectionFailed), "ConnectionFailed");
+    EXPECT_STREQ(iio::error::codeLabel(ErrorCode::NoResponse), "NoResponse");
+}
+
+TEST(ControllerErrorTest, SeverityLabelsAreStable)
+{
+    EXPECT_STREQ(iio::error::severityLabel(Severity::Info), "INFO");
+    EXPECT_STREQ(iio::error::severityLabel(Severity::Warning), "WARNING");
+    EXPECT_STREQ(iio::error::severityLabel(Severity::Error), "ERROR");
+}
+
+TEST(ControllerErrorTest, FormatIncludesSeverityAndCode)
+{
+    Result result;
+    result.success = false;
+    result.severity = Severity::Error;
+    result.code = ErrorCode::ConnectionFailed;
+    result.message = "Failed to connect: host unreachable";
+    EXPECT_EQ(iio::error::format(result),
+              "[ERROR] ConnectionFailed: Failed to connect: host unreachable");
+}
+
+TEST(ControllerErrorTest, FormatOmitsCodeWhenNone)
+{
+    Result result;
+    result.success = true;
+    result.severity = Severity::Info;
+    result.code = ErrorCode::None;
+    result.message = "Connected successfully";
+    EXPECT_EQ(iio::error::format(result), "[INFO] Connected successfully");
 }

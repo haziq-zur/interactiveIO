@@ -24,6 +24,30 @@ struct ConnectionConfig {
     int port = 5025;
 };
 
+// Classifies every failure the controller can report so the frontends can react
+// (and present) consistently without parsing message strings.
+enum class ErrorCode {
+    None = 0,            // no error (successful operation)
+    NotConnected,        // an operation needs an open connection but there is none
+    UnsupportedProtocol, // requested protocol has no backend implementation
+    ProtocolUnavailable, // backend runtime/library is missing (e.g. no VISA)
+    InitializationFailed,// transport failed to initialize
+    ConnectionFailed,    // could not open the connection
+    SendFailed,          // a command could not be written to the instrument
+    NoResponse,          // a query produced no data (timeout or read error)
+    OperationUnsupported,// operation is not valid for the active transport
+    ClearFailed,         // VISA device clear failed
+    InvalidInput         // caller-supplied parameters were rejected
+};
+
+// How serious a Result is, used by frontends to choose presentation (icon,
+// colour, whether to interrupt the user with a modal dialog).
+enum class Severity {
+    Info,    // informational / success
+    Warning, // recoverable; the session continues (e.g. query timeout)
+    Error    // operation failed and needs user attention
+};
+
 // User-configurable parameters for the active communication channel. These are
 // applied by the controller to every command it dispatches, so the frontends
 // can expose a single "settings" surface without knowing transport details.
@@ -48,7 +72,26 @@ struct Result {
     std::string response;       // instrument reply (queries only)
     bool hasResponse = false;   // true when `response` was populated
     double elapsedMs = 0.0;     // time to complete the command, in milliseconds
+    ErrorCode code = ErrorCode::None;     // structured failure classification
+    Severity severity = Severity::Info;   // how the frontend should present it
 };
+
+// --- Error model helpers (pure, frontend-agnostic) --------------------------
+// Free helpers so any frontend can render a structured, consistent error
+// presentation from a Result without duplicating the mapping logic.
+namespace error {
+
+// A short, stable, machine-friendly label for an error code (e.g. "ConnectionFailed").
+const char* codeLabel(ErrorCode code);
+
+// A short label for a severity (e.g. "ERROR").
+const char* severityLabel(Severity severity);
+
+// A single-line, user-facing summary combining severity, code and message,
+// e.g. "[ERROR] ConnectionFailed: Failed to connect: timed out".
+std::string format(const Result& result);
+
+} // namespace error
 
 // InstrumentController is the integration layer between the user-facing
 // frontends (GUI / console) and the backend transport implementations. It owns
