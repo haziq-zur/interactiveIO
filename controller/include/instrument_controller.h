@@ -171,6 +171,11 @@ public:
     // timeout for this single call; -1 uses the configured value.
     Result execute(const std::string& command, int timeoutSeconds = -1);
 
+    // Requests that an in-progress blocking read (from execute/captureImage on
+    // another thread) abort as soon as possible. Safe to call at any time and
+    // from a different thread than the one performing the read.
+    void cancel();
+
     // --- VISA-specific capabilities (no-ops / errors for other protocols) -----
 
     // Sets the VISA I/O timeout in milliseconds.

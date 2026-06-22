@@ -105,6 +105,18 @@ public:
      * @return true if the underlying library/driver is available
      */
     virtual bool isAvailable() const = 0;
+
+    /**
+     * @brief Request that an in-progress blocking read abort as soon as possible
+     *
+     * Safe to call from another thread while readResponse() / readBinaryResponse()
+     * are blocked waiting for data. The read polls this request at a short
+     * interval and returns promptly (empty) once it is set. The flag is cleared
+     * automatically at the start of every read, so a cancellation only affects
+     * the operation that is in flight when it is requested. The default
+     * implementation is a no-op for transports that do not support it.
+     */
+    virtual void requestCancel() {}
 };
 
 #endif // INSTRUMENT_CONNECTION_H

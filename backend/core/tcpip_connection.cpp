@@ -1,6 +1,8 @@
 #include "tcpip_connection.h"
 #include "platform/socket_wrapper.h"
 #include "ieee4882.h"
+#include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <sstream>
 
@@ -108,34 +110,62 @@ std::string TCPIPConnection::readResponse(int timeoutSeconds)
         return "";
     }
 
-    // Set timeout
-    pImpl_->socket.setTimeout(timeoutSeconds * 1000);
+    // Clear any stale cancellation from a previous read.
+    cancelRequested_ = false;
 
-    // Read data
+    // Poll in short slices instead of one long blocking read so a cancellation
+    // request (from another thread) can abort the wait within ~one slice.
+    const int totalMs = (timeoutSeconds > 0) ? timeoutSeconds * 1000 : 0;
+    const int sliceMs = 100;
+    const auto start = std::chrono::steady_clock::now();
+
     char buffer[4096] = { 0 };
-    size_t bytesReceived = 0;
-    
-    if (pImpl_->socket.receive(buffer, sizeof(buffer) - 1, bytesReceived)) {
-        if (bytesReceived > 0) {
-            buffer[bytesReceived] = '\0';
-            return std::string(buffer);
-        } else if (bytesReceived == 0) {
+
+    while (true) {
+        if (cancelRequested_) {
+            setLastError("Request cancelled by user");
+            return "";
+        }
+
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start).count();
+        const long remaining = static_cast<long>(totalMs) - elapsed;
+        if (remaining <= 0) {
+            setLastError("Timeout waiting for response");
+            return "";
+        }
+
+        const int waitMs = static_cast<int>(std::min<long>(sliceMs, remaining));
+        pImpl_->socket.setTimeout(waitMs);
+
+        size_t bytesReceived = 0;
+        if (pImpl_->socket.receive(buffer, sizeof(buffer) - 1, bytesReceived)) {
+            if (bytesReceived > 0) {
+                buffer[bytesReceived] = '\0';
+                return std::string(buffer, bytesReceived);
+            }
+            // Zero bytes => peer closed the connection.
             setLastError("Connection closed");
             pImpl_->connected = false;
             connected_ = false;
+            return "";
         }
-    } else {
-        std::string error = pImpl_->socket.getLastError();
-        // Check if it's just a timeout
-        if (error.find("timeout") != std::string::npos || 
-            error.find("Timeout") != std::string::npos) {
-            setLastError("Timeout waiting for response");
-        } else {
-            setLastError(error);
-        }
-    }
 
-    return "";
+        // receive() failed: a per-slice timeout just means "keep waiting"; any
+        // other error is fatal for this read.
+        const std::string error = pImpl_->socket.getLastError();
+        if (error.find("timeout") == std::string::npos
+            && error.find("Timeout") == std::string::npos) {
+            setLastError(error);
+            return "";
+        }
+        // else: slice elapsed with no data — loop to re-check cancel / timeout.
+    }
+}
+
+void TCPIPConnection::requestCancel()
+{
+    cancelRequested_ = true;
 }
 
 std::vector<uint8_t> TCPIPConnection::readBinaryResponse(int timeoutSeconds, size_t maxBytes)
@@ -147,7 +177,13 @@ std::vector<uint8_t> TCPIPConnection::readBinaryResponse(int timeoutSeconds, siz
         return buffer;
     }
 
-    pImpl_->socket.setTimeout(timeoutSeconds * 1000);
+    // Clear any stale cancellation from a previous read.
+    cancelRequested_ = false;
+
+    // Poll in short slices so a cancellation request can abort the wait.
+    const int totalMs = (timeoutSeconds > 0) ? timeoutSeconds * 1000 : 0;
+    const int sliceMs = 100;
+    const auto start = std::chrono::steady_clock::now();
 
     // Read raw chunks until the full IEEE 488.2 block has arrived, the size cap
     // is hit, or the peer times out / closes. `needed` is the total block size
@@ -156,15 +192,34 @@ std::vector<uint8_t> TCPIPConnection::readBinaryResponse(int timeoutSeconds, siz
     size_t needed = 0;
 
     while (true) {
+        if (cancelRequested_) {
+            setLastError("Request cancelled by user");
+            return buffer;
+        }
+
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start).count();
+        const long remaining = static_cast<long>(totalMs) - elapsed;
+        if (remaining <= 0) {
+            setLastError("Timeout waiting for response");
+            break;
+        }
+        pImpl_->socket.setTimeout(static_cast<int>(std::min<long>(sliceMs, remaining)));
+
         size_t got = 0;
         if (!pImpl_->socket.receive(chunk, sizeof(chunk), got)) {
             std::string error = pImpl_->socket.getLastError();
             if (error.find("timeout") != std::string::npos
                 || error.find("Timeout") != std::string::npos) {
-                setLastError("Timeout waiting for response");
-            } else {
-                setLastError(error);
+                // Slice elapsed with no data: keep waiting unless we already
+                // have a partial block (then treat as end of a slow response).
+                if (!buffer.empty()) {
+                    setLastError("Timeout waiting for response");
+                    break;
+                }
+                continue;
             }
+            setLastError(error);
             break;
         }
         if (got == 0) {

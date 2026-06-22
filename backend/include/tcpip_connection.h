@@ -2,6 +2,7 @@
 #define TCPIP_CONNECTION_H
 
 #include "instrument_connection.h"
+#include <atomic>
 #include <string>
 #include <cstdint>
 
@@ -28,6 +29,7 @@ public:
     virtual std::string getConnectionType() const override;
     virtual std::string getConnectionInfo() const override;
     virtual bool isAvailable() const override;
+    virtual void requestCancel() override;
 
     // TCP/IP specific methods
     std::string getIP() const { return ip_; }
@@ -45,7 +47,10 @@ private:
     bool connected_;
     bool wsaInitialized_;
     std::string lastError_;
-    
+
+    // Set asynchronously by requestCancel() to abort a blocking read.
+    std::atomic<bool> cancelRequested_{false};
+
     void setLastError(const std::string& error);
 };
 

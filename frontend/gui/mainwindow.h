@@ -114,9 +114,12 @@ private:
     QString outColor(theme::Output role) const;
     // Runs a blocking controller operation on a worker thread while showing the
     // loading overlay, then invokes onFinished on the UI thread with the result.
+    // When `cancellable` is true the overlay shows a Stop button that calls
+    // InstrumentController::cancel() to abort the in-progress read.
     void runWithLoading(const QString& message,
                         std::function<iio::Result()> work,
-                        std::function<void(const iio::Result&)> onFinished);
+                        std::function<void(const iio::Result&)> onFinished,
+                        bool cancellable = false);
     void showError(const QString& message);
     void showSuccess(const QString& message);
     // Shows the captured image in a modal preview dialog with a Save button.
@@ -150,6 +153,10 @@ private:
     // Screen-capture preferences (configured via the Settings dialog).
     QString captureCommand;  // SCPI command, e.g. ":DISPlay:DATA? PNG"
     QString captureFormat;   // expected format hint ("" = auto-detect)
+
+    // Password applied automatically to encrypt saved logs and decrypt opened
+    // logs (configurable via the Settings dialog, persisted via QSettings).
+    QString logPassword;
 };
 
 #endif // MAINWINDOW_H

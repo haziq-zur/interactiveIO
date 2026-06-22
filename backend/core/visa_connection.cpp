@@ -6,9 +6,14 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 
 #ifndef VI_SUCCESS_MAX_CNT
 #define VI_SUCCESS_MAX_CNT 0x3FFF0006L
+#endif
+
+#ifndef VI_ERROR_TMO
+#define VI_ERROR_TMO 0xBFFF0015L
 #endif
 
 VISAConnection::VISAConnection()
@@ -197,37 +202,68 @@ std::string VISAConnection::readResponse(int timeoutSeconds)
         return "";
     }
 
-    // Temporarily set timeout
-    unsigned int oldTimeout = timeoutMs_;
-    if (viSetAttribute_) {
-        viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE, timeoutSeconds * 1000);
-    }
+    // Clear any stale cancellation from a previous read.
+    cancelRequested_ = false;
+
+    const unsigned int oldTimeout = timeoutMs_;
+
+    // Poll with a short per-attempt VISA timeout so a cancellation request can
+    // abort the wait within ~one slice instead of blocking the whole timeout.
+    const long totalMs = (timeoutSeconds > 0) ? timeoutSeconds * 1000L : 0L;
+    const long sliceMs = 100;
+    const auto start = std::chrono::steady_clock::now();
 
     const unsigned int bufferSize = 1024;
     char* buffer = new char[bufferSize];
-    ViUInt32 readCount = 0;
-    
-    ViStatus status = viRead_(instrSession_, 
-                              (unsigned char*)buffer, 
-                              bufferSize - 1, 
-                              &readCount);
-    
     std::string result;
-    if (status == VI_SUCCESS || readCount > 0) {
-        buffer[readCount] = '\0';
-        result = std::string(buffer);
-    } else {
+
+    while (true) {
+        if (cancelRequested_) {
+            setLastError("Request cancelled by user");
+            break;
+        }
+
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start).count();
+        const long remaining = totalMs - elapsed;
+        if (remaining <= 0) {
+            setLastError("Timeout waiting for response");
+            break;
+        }
+
+        if (viSetAttribute_) {
+            viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE,
+                            static_cast<ViUInt32>(std::min(sliceMs, remaining)));
+        }
+
+        ViUInt32 readCount = 0;
+        ViStatus status = viRead_(instrSession_, (unsigned char*)buffer,
+                                  bufferSize - 1, &readCount);
+
+        if (status == VI_SUCCESS || status == VI_SUCCESS_MAX_CNT || readCount > 0) {
+            buffer[readCount] = '\0';
+            result = std::string(buffer, readCount);
+            break;
+        }
+        if (status == VI_ERROR_TMO) {
+            continue; // slice elapsed with no data — re-check cancel / timeout
+        }
         setLastErrorFromStatus(status);
+        break;
     }
 
     delete[] buffer;
 
-    // Restore timeout
     if (viSetAttribute_) {
         viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE, oldTimeout);
     }
-    
+
     return result;
+}
+
+void VISAConnection::requestCancel()
+{
+    cancelRequested_ = true;
 }
 
 std::vector<uint8_t> VISAConnection::readBinaryResponse(int timeoutSeconds, size_t maxBytes)
@@ -239,10 +275,16 @@ std::vector<uint8_t> VISAConnection::readBinaryResponse(int timeoutSeconds, size
         return buffer;
     }
 
+    // Clear any stale cancellation from a previous read.
+    cancelRequested_ = false;
+
     const unsigned int oldTimeout = timeoutMs_;
-    if (viSetAttribute_) {
-        viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE, timeoutSeconds * 1000);
-    }
+
+    // Poll with short per-attempt VISA timeouts so a cancellation request can
+    // abort the wait promptly.
+    const long totalMs = (timeoutSeconds > 0) ? timeoutSeconds * 1000L : 0L;
+    const long sliceMs = 100;
+    const auto start = std::chrono::steady_clock::now();
 
     // Read raw chunks (viRead returns exact bytes, including NULs/newlines) until
     // the full IEEE 488.2 block has arrived, the cap is hit, or a read ends the
@@ -252,11 +294,37 @@ std::vector<uint8_t> VISAConnection::readBinaryResponse(int timeoutSeconds, size
     size_t needed = 0;
 
     while (true) {
+        if (cancelRequested_) {
+            setLastError("Request cancelled by user");
+            break;
+        }
+
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - start).count();
+        const long remaining = totalMs - elapsed;
+        if (remaining <= 0) {
+            setLastError("Timeout waiting for response");
+            break;
+        }
+        if (viSetAttribute_) {
+            viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE,
+                            static_cast<ViUInt32>(std::min(sliceMs, remaining)));
+        }
+
         ViUInt32 readCount = 0;
         ViStatus status = viRead_(instrSession_, chunk.data(), chunkSize, &readCount);
 
         if (readCount > 0) {
             buffer.insert(buffer.end(), chunk.data(), chunk.data() + readCount);
+        }
+
+        // A slice timeout with no new data just means "keep waiting".
+        if (status == VI_ERROR_TMO && readCount == 0) {
+            if (!buffer.empty()) {
+                // We have a partial block but the instrument stalled; treat the
+                // overall timeout (checked at loop top) as the deadline.
+            }
+            continue;
         }
 
         if (needed == 0) {

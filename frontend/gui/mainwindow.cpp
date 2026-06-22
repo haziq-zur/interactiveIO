@@ -13,11 +13,11 @@
 #include <QTime>
 #include <QCompleter>
 #include <QFileDialog>
-#include <QInputDialog>
 #include <QFile>
 #include <QTextStream>
 #include <QDateTime>
 #include <QPointer>
+#include <QSettings>
 #include <QHeaderView>
 #include <QTableWidgetItem>
 #include <QSignalBlocker>
@@ -48,6 +48,34 @@ bool MainWindow::isTestMode()
     return s_testMode;
 }
 
+namespace {
+
+// QSettings location for the log-encryption password, plus the default applied
+// on first run (and whenever the user clears the field). Logs are always saved
+// and opened with whatever value is stored here, without prompting.
+const char *kLogSettingsGroup = "logging";
+const char *kLogPasswordKey = "encryptionPassword";
+const char *kDefaultLogPassword = "interactiveIO";
+
+QString loadLogPassword()
+{
+    QSettings settings;
+    settings.beginGroup(kLogSettingsGroup);
+    const QString value = settings.value(kLogPasswordKey, kDefaultLogPassword).toString();
+    settings.endGroup();
+    return value.isEmpty() ? QString::fromLatin1(kDefaultLogPassword) : value;
+}
+
+void saveLogPassword(const QString& password)
+{
+    QSettings settings;
+    settings.beginGroup(kLogSettingsGroup);
+    settings.setValue(kLogPasswordKey, password);
+    settings.endGroup();
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -60,6 +88,10 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     setupConnections();
+
+    // Load the log-encryption password (default on first run) so Save/Open Log
+    // can use it automatically without prompting.
+    logPassword = loadLogPassword();
 
     // Default the protocol selection to VISA (VXI-11 connections).
     ui->protocolCombo->setCurrentIndex(1);
@@ -587,7 +619,8 @@ void MainWindow::copySelectionToClipboard() const
 
 void MainWindow::runWithLoading(const QString& message,
                                 std::function<iio::Result()> work,
-                                std::function<void(const iio::Result&)> onFinished)
+                                std::function<void(const iio::Result&)> onFinished,
+                                bool cancellable)
 {
     // In test mode (no event loop pumping / determinism), run synchronously.
     if (s_testMode) {
@@ -595,16 +628,31 @@ void MainWindow::runWithLoading(const QString& message,
         return;
     }
 
-    loadingOverlay->start(message);
+    loadingOverlay->start(message, cancellable);
+
+    // When cancellable, route the overlay's Stop button to the controller so an
+    // in-progress blocking read aborts promptly. The connection stays usable.
+    QMetaObject::Connection cancelConn;
+    if (cancellable) {
+        cancelConn = connect(loadingOverlay, &LoadingOverlay::cancelled, this, [this]() {
+            loadingOverlay->setMessage("Stopping…");
+            if (controller) {
+                controller->cancel();
+            }
+        });
+    }
 
     // Run the blocking controller call off the UI thread so the spinner keeps
     // animating, then marshal the result back to the UI thread.
     QPointer<MainWindow> self(this);
-    std::thread([self, work = std::move(work), onFinished = std::move(onFinished)]() mutable {
+    std::thread([self, work = std::move(work), onFinished = std::move(onFinished), cancelConn]() mutable {
         iio::Result result = work();
-        QMetaObject::invokeMethod(qApp, [self, result, onFinished = std::move(onFinished)]() {
+        QMetaObject::invokeMethod(qApp, [self, result, onFinished = std::move(onFinished), cancelConn]() {
             if (!self) {
                 return;
+            }
+            if (cancelConn) {
+                QObject::disconnect(cancelConn);
             }
             self->loadingOverlay->stop();
             onFinished(result);
@@ -773,6 +821,19 @@ void MainWindow::on_commandInput_returnPressed()
             const QString duration =
                 QString("%1 ms").arg(result.elapsedMs, 0, 'f', 3);
 
+            // User-initiated cancellation: report it as a muted, non-error row
+            // and keep the input so the command can be retried.
+            const bool cancelled = !result.success &&
+                QString::fromStdString(result.message).contains("cancel", Qt::CaseInsensitive);
+            if (cancelled) {
+                appendIoRow(address, "■  Request cancelled", duration,
+                            theme::Output::Muted);
+                ui->commandInput->setText(sentCommand);
+                ui->commandInput->selectAll();
+                ui->commandInput->setFocus();
+                return;
+            }
+
             if (!result.success) {
                 if (result.hasResponse || isQuery) {
                     // Query path: surface timeout / error without tearing down the UI.
@@ -796,7 +857,8 @@ void MainWindow::on_commandInput_returnPressed()
                 ui->commandInput->selectAll();
                 ui->commandInput->setFocus();
             }
-        });
+        },
+        /*cancellable=*/isQuery);
 }
 
 void MainWindow::on_clearButton_clicked()
@@ -845,6 +907,15 @@ void MainWindow::on_captureButton_clicked()
             const QString duration =
                 QString("%1 ms").arg(result.elapsedMs, 0, 'f', 3);
 
+            // User-initiated cancellation: report as a muted, non-error row.
+            const bool cancelled = !result.success &&
+                QString::fromStdString(result.message).contains("cancel", Qt::CaseInsensitive);
+            if (cancelled) {
+                appendIoRow(address, "■  Capture cancelled", duration,
+                            theme::Output::Muted);
+                return;
+            }
+
             if (!result.success) {
                 if (result.severity == iio::Severity::Warning) {
                     appendIoRow(address, QString::fromStdString(result.message),
@@ -869,7 +940,8 @@ void MainWindow::on_captureButton_clicked()
                         duration, theme::Output::Success);
 
             showImagePreview(*capture);
-        });
+        },
+        /*cancellable=*/true);
 }
 
 void MainWindow::showImagePreview(const iio::ImageCapture& capture)
@@ -964,24 +1036,13 @@ void MainWindow::on_actionSaveLog_triggered()
         return;
     }
 
-    bool okPwd = false;
-    QString password = QInputDialog::getText(
-        this,
-        tr("Encrypt Log"),
-        tr("Enter a password to encrypt the log:"),
-        QLineEdit::Password,
-        QString(),
-        &okPwd);
-
-    if (!okPwd) {
-        return; // user cancelled
-    }
-    if (password.isEmpty()) {
-        showError("A non-empty password is required to encrypt the log.");
+    // Use the configured log-encryption password (set in Settings). No prompt.
+    if (logPassword.isEmpty()) {
+        showError("No log encryption password is configured. Set one in Settings first.");
         return;
     }
 
-    saveLogToFile(fileName, password);
+    saveLogToFile(fileName, logPassword);
 }
 
 bool MainWindow::saveLogToFile(const QString& fileName, const QString& password)
@@ -1030,20 +1091,13 @@ void MainWindow::on_actionOpenLog_triggered()
         return;
     }
 
-    bool okPwd = false;
-    QString password = QInputDialog::getText(
-        this,
-        tr("Decrypt Log"),
-        tr("Enter the password to decrypt the log:"),
-        QLineEdit::Password,
-        QString(),
-        &okPwd);
-
-    if (!okPwd) {
-        return; // user cancelled
+    // Decrypt with the configured log-encryption password (set in Settings).
+    if (logPassword.isEmpty()) {
+        showError("No log encryption password is configured. Set one in Settings first.");
+        return;
     }
 
-    openLogFromFile(fileName, password);
+    openLogFromFile(fileName, logPassword);
 }
 
 bool MainWindow::openLogFromFile(const QString& fileName, const QString& password)
@@ -1146,6 +1200,7 @@ void MainWindow::on_actionSettings_triggered()
     dialog.setShowResponseTime(current.showResponseTime);
     dialog.setCaptureCommand(captureCommand);
     dialog.setCaptureFormat(captureFormat);
+    dialog.setLogPassword(logPassword);
 
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -1160,6 +1215,18 @@ void MainWindow::on_actionSettings_triggered()
     captureCommand = dialog.captureCommand();
     captureFormat = dialog.captureFormat();
     updateCaptureTooltip();
+
+    // Persist the log-encryption password (falling back to the default when the
+    // field is left blank) so it is reused on every Save/Open Log and survives
+    // restarts.
+    QString newPassword = dialog.logPassword();
+    if (newPassword.isEmpty()) {
+        newPassword = QString::fromLatin1(kDefaultLogPassword);
+    }
+    if (newPassword != logPassword) {
+        logPassword = newPassword;
+        saveLogPassword(logPassword);
+    }
 
     // The Duration column is shown only when response timing is enabled.
     ui->outputTable->setColumnHidden(3, !updated.showResponseTime);

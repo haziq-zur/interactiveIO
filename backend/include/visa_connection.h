@@ -2,6 +2,7 @@
 #define VISA_CONNECTION_H
 
 #include "instrument_connection.h"
+#include <atomic>
 #include <string>
 
 // Forward declaration
@@ -55,6 +56,7 @@ public:
     virtual std::string getConnectionType() const override;
     virtual std::string getConnectionInfo() const override;
     virtual bool isAvailable() const override;
+    virtual void requestCancel() override;
 
     // VISA specific methods
     std::string getResourceString() const { return resourceString_; }
@@ -69,6 +71,8 @@ private:
     bool rmInitialized_;
     bool visaAvailable_;
     unsigned int timeoutMs_;
+    // Set asynchronously by requestCancel() to abort a blocking read.
+    std::atomic<bool> cancelRequested_{false};
     void* visaDll_;  // Platform-agnostic library handle marker
     Platform::DynamicLibrary* visaLib_;  // Cross-platform dynamic loader
     

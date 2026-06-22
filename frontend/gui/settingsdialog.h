@@ -42,6 +42,11 @@ public:
     QString captureFormat() const;
     void setCaptureFormat(const QString& format);
 
+    // Password used to encrypt / decrypt saved log files. Applied to every
+    // Save Log and Open Log action without prompting.
+    QString logPassword() const;
+    void setLogPassword(const QString& password);
+
 private:
     QComboBox *eolCombo;
     QSpinBox *timeoutSpinBox;
@@ -49,6 +54,8 @@ private:
     QComboBox *capturePresetCombo;
     QLineEdit *captureCommandEdit;
     QComboBox *captureFormatCombo;
+    QLineEdit *logPasswordEdit;
+    QCheckBox *showPasswordCheckBox;
 };
 
 #endif // SETTINGSDIALOG_H

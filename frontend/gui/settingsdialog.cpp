@@ -58,6 +58,8 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     , capturePresetCombo(new QComboBox(this))
     , captureCommandEdit(new QLineEdit(this))
     , captureFormatCombo(new QComboBox(this))
+    , logPasswordEdit(new QLineEdit(this))
+    , showPasswordCheckBox(new QCheckBox(this))
 {
     setWindowTitle(tr("Communication Settings"));
     setObjectName("settingsDialog");
@@ -159,6 +161,41 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     captureLayout->addLayout(captureForm);
     captureLayout->addWidget(captureHelp);
 
+    // --- Log file encryption --------------------------------------------------
+    logPasswordEdit->setObjectName("logPasswordEdit");
+    logPasswordEdit->setEchoMode(QLineEdit::Password);
+    logPasswordEdit->setToolTip(
+        tr("Password used to encrypt every saved log file and to decrypt logs\n"
+           "when opening them. The same value is applied automatically to both\n"
+           "Save Log and Open Log, so you are not prompted each time."));
+    logPasswordEdit->setPlaceholderText(tr("Log encryption password"));
+
+    showPasswordCheckBox->setObjectName("showPasswordCheckBox");
+    showPasswordCheckBox->setText(tr("Show password"));
+    connect(showPasswordCheckBox, &QCheckBox::toggled, this, [this](bool shown) {
+        logPasswordEdit->setEchoMode(shown ? QLineEdit::Normal : QLineEdit::Password);
+    });
+
+    auto *logForm = new QFormLayout;
+    logForm->addRow(tr("Encryption password:"), logPasswordEdit);
+    logForm->addRow(QString(), showPasswordCheckBox);
+
+    auto *logHelp = new QLabel(
+        tr("<small>This password is used automatically whenever you <b>save</b> or "
+           "<b>open</b> a log file — you will not be prompted. Logs saved with one "
+           "password can only be reopened with that same password, so keep it safe. "
+           "Changing it here affects future saves and opens.</small>"),
+        this);
+    logHelp->setObjectName("logHelpLabel");
+    logHelp->setWordWrap(true);
+    logHelp->setTextFormat(Qt::RichText);
+
+    auto *logGroup = new QGroupBox(tr("Log File Encryption"), this);
+    logGroup->setObjectName("logGroup");
+    auto *logLayout = new QVBoxLayout(logGroup);
+    logLayout->addLayout(logForm);
+    logLayout->addWidget(logHelp);
+
     auto *form = new QFormLayout;
     form->addRow(tr("EOL sequence:"), eolCombo);
     form->addRow(tr("Response timeout:"), timeoutSpinBox);
@@ -173,6 +210,7 @@ SettingsDialog::SettingsDialog(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(form);
     layout->addWidget(captureGroup);
+    layout->addWidget(logGroup);
     layout->addStretch();
     layout->addWidget(buttons);
 }
@@ -233,4 +271,14 @@ void SettingsDialog::setCaptureFormat(const QString& format)
 {
     const int index = captureFormatCombo->findData(format);
     captureFormatCombo->setCurrentIndex(index >= 0 ? index : 0);
+}
+
+QString SettingsDialog::logPassword() const
+{
+    return logPasswordEdit->text();
+}
+
+void SettingsDialog::setLogPassword(const QString& password)
+{
+    logPasswordEdit->setText(password);
 }

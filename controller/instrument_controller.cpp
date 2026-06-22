@@ -116,6 +116,13 @@ bool InstrumentController::isConnected() const
     return connection_ && connection_->isConnected();
 }
 
+void InstrumentController::cancel()
+{
+    if (connection_) {
+        connection_->requestCancel();
+    }
+}
+
 bool InstrumentController::isProtocolAvailable(Protocol protocol) const
 {
     // A connected controller can report its own connection's availability;

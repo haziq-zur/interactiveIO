@@ -4,10 +4,12 @@
 #include <QPainter>
 #include <QPaintEvent>
 #include <QFont>
+#include <QPushButton>
 
 LoadingOverlay::LoadingOverlay(QWidget *parent)
     : QWidget(parent)
     , timer(new QTimer(this))
+    , cancelButton(new QPushButton(tr("Stop"), this))
     , angle(0)
     , backdropColor(13, 15, 20, 180)
     , accentColor(0x63, 0x66, 0xf1)
@@ -15,6 +17,19 @@ LoadingOverlay::LoadingOverlay(QWidget *parent)
 {
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setVisible(false);
+
+    cancelButton->setCursor(Qt::PointingHandCursor);
+    cancelButton->setVisible(false);
+    cancelButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #e5484d; color: #ffffff; border: none;"
+        "  border-radius: 6px; padding: 6px 18px; font-weight: bold;"
+        "}"
+        "QPushButton:hover { background-color: #f2555a; }"
+        "QPushButton:pressed { background-color: #c93b40; }");
+    connect(cancelButton, &QPushButton::clicked, this, [this]() {
+        emit cancelled();
+    });
 
     // ~33 fps rotation.
     timer->setInterval(30);
@@ -44,12 +59,18 @@ void LoadingOverlay::setDarkMode(bool dark)
     }
 }
 
-void LoadingOverlay::start(const QString& msg)
+void LoadingOverlay::start(const QString& msg, bool cancellable)
 {
     message = msg;
     angle = 0;
     if (parentWidget()) {
         setGeometry(parentWidget()->rect());
+    }
+    cancelButton->setVisible(cancellable);
+    if (cancellable) {
+        cancelButton->setEnabled(true);
+        repositionCancelButton();
+        cancelButton->raise();
     }
     raise();
     setVisible(true);
@@ -60,7 +81,26 @@ void LoadingOverlay::start(const QString& msg)
 void LoadingOverlay::stop()
 {
     timer->stop();
+    cancelButton->setVisible(false);
     setVisible(false);
+}
+
+void LoadingOverlay::setMessage(const QString& msg)
+{
+    message = msg;
+    if (isVisible()) {
+        repositionCancelButton();
+        update();
+    }
+}
+
+void LoadingOverlay::repositionCancelButton()
+{
+    // Centred horizontally, below the spinner + status text.
+    const QSize hint = cancelButton->sizeHint();
+    const int x = (width() - hint.width()) / 2;
+    const int y = static_cast<int>(height() / 2.0 - 10.0) + 22 + 46;
+    cancelButton->setGeometry(x, y, hint.width(), hint.height());
 }
 
 bool LoadingOverlay::eventFilter(QObject *watched, QEvent *event)
@@ -68,6 +108,9 @@ bool LoadingOverlay::eventFilter(QObject *watched, QEvent *event)
     // Keep the overlay sized to its parent.
     if (watched == parentWidget() && event->type() == QEvent::Resize) {
         setGeometry(parentWidget()->rect());
+        if (cancelButton->isVisible()) {
+            repositionCancelButton();
+        }
     }
     return QWidget::eventFilter(watched, event);
 }
