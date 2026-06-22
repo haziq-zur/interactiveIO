@@ -1,10 +1,15 @@
 #include "visa_connection.h"
 #include "platform/dynamic_loader.h"
+#include "ieee4882.h"
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <algorithm>
 #include <cctype>
+
+#ifndef VI_SUCCESS_MAX_CNT
+#define VI_SUCCESS_MAX_CNT 0x3FFF0006L
+#endif
 
 VISAConnection::VISAConnection()
     : resourceString_("")
@@ -223,6 +228,90 @@ std::string VISAConnection::readResponse(int timeoutSeconds)
     }
     
     return result;
+}
+
+std::vector<uint8_t> VISAConnection::readBinaryResponse(int timeoutSeconds, size_t maxBytes)
+{
+    std::vector<uint8_t> buffer;
+
+    if (!connected_ || !instrSession_) {
+        setLastError("Not connected");
+        return buffer;
+    }
+
+    const unsigned int oldTimeout = timeoutMs_;
+    if (viSetAttribute_) {
+        viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE, timeoutSeconds * 1000);
+    }
+
+    // Read raw chunks (viRead returns exact bytes, including NULs/newlines) until
+    // the full IEEE 488.2 block has arrived, the cap is hit, or a read ends the
+    // transfer (VI_SUCCESS) without more data pending.
+    const ViUInt32 chunkSize = 65536;
+    std::vector<unsigned char> chunk(chunkSize);
+    size_t needed = 0;
+
+    while (true) {
+        ViUInt32 readCount = 0;
+        ViStatus status = viRead_(instrSession_, chunk.data(), chunkSize, &readCount);
+
+        if (readCount > 0) {
+            buffer.insert(buffer.end(), chunk.data(), chunk.data() + readCount);
+        }
+
+        if (needed == 0) {
+            ieee4882::BlockHeader header;
+            std::string error;
+            if (!ieee4882::parseHeader(buffer.data(), buffer.size(), header, error)) {
+                break; // not a binary block
+            }
+            if (header.headerComplete && !header.indefinite) {
+                needed = header.headerLength + header.payloadLength;
+                if (needed > maxBytes) {
+                    setLastError("Binary response exceeds maximum size ("
+                                 + std::to_string(maxBytes) + " bytes)");
+                    if (viSetAttribute_) {
+                        viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE, oldTimeout);
+                    }
+                    return buffer;
+                }
+            } else if (header.headerComplete && header.indefinite) {
+                if (!buffer.empty() && buffer.back() == '\n') {
+                    break;
+                }
+            }
+        }
+
+        if (needed > 0 && buffer.size() >= needed) {
+            break;
+        }
+        if (buffer.size() >= maxBytes) {
+            setLastError("Binary response exceeds maximum size ("
+                         + std::to_string(maxBytes) + " bytes)");
+            break;
+        }
+
+        // Stop when the instrument signalled end-of-transfer and gave no data,
+        // or on a read error. VI_SUCCESS_MAX_CNT means more data is pending.
+        if (status != VI_SUCCESS_MAX_CNT) {
+            if (readCount == 0 && status != VI_SUCCESS) {
+                if (buffer.empty()) {
+                    setLastErrorFromStatus(status);
+                }
+                break;
+            }
+            if (status == VI_SUCCESS && needed == 0) {
+                // Transfer ended and we never saw a definite-length header.
+                break;
+            }
+        }
+    }
+
+    if (viSetAttribute_) {
+        viSetAttribute_(instrSession_, VI_ATTR_TMO_VALUE, oldTimeout);
+    }
+
+    return buffer;
 }
 
 bool VISAConnection::isConnected() const

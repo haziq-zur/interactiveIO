@@ -6,6 +6,7 @@ Interactive SCPI instrument communication tool with unified interface supporting
 
 - **Dual Interface**: Qt6 GUI and Console applications available
 - **REST API**: HTTP server exposing the instrument controller for CLI/automation (curl, scripts, CI)
+- **Screen Image Capture**: Retrieve instrument screenshots (PNG/BMP/JPEG/GIF) via IEEE 488.2 binary block transfer, available in the GUI, console, and REST API
 - **Cross-Platform Support**: Single codebase for Windows and Linux
 - **Unified Application**: Single executable with runtime protocol selection
 - **TCP/IP Communication**: Cross-platform socket communication (Winsock2 on Windows, Berkeley sockets on Linux)
@@ -156,6 +157,7 @@ Select Communication Protocol:
 - `eol` - Set EOL (End of Line) sequence (default: `\n`)
 - `timeout` - Set timeout (VISA only)
 - `clear` - Clear instrument buffer (VISA only)
+- `image` - Capture a screen image from the instrument and save it to a file
 - `exit` - Return to protocol menu
 - `quit` - Exit program
 - Any SCPI command your instrument supports
@@ -236,6 +238,7 @@ Press `Ctrl+C` to stop the server.
 | `POST` | `/api/disconnect` | Close the connection | — |
 | `POST` | `/api/command` | Send a SCPI command | `{"command":"*IDN?","timeoutSeconds":5}` |
 | `POST` | `/api/clear` | VISA device clear | — |
+| `POST` | `/api/image` | Capture a screen image | `{"command":":DISP:DATA? PNG","format":"png","encoding":"base64"}` |
 | `POST` | `/api/timeout` | Set VISA I/O timeout | `{"timeoutMs":2000}` |
 | `GET` | `/api/settings` | Read communication settings | — |
 | `PUT` | `/api/settings` | Update settings | `{"eol":"\n","responseTimeoutSeconds":10,"showResponseTime":true}` |
@@ -280,8 +283,9 @@ Failures carry a machine-readable `code`, a `severity`, and a ready-to-display
 | `200` | Success | `None` |
 | `400` | Bad request | `InvalidInput` |
 | `409` | Conflict (no active connection) | `NotConnected` |
-| `422` | Unprocessable | `UnsupportedProtocol`, `OperationUnsupported` |
-| `502` | Upstream/instrument failure | `ConnectionFailed`, `InitializationFailed`, `SendFailed`, `ClearFailed` |
+| `422` | Unprocessable | `UnsupportedProtocol`, `OperationUnsupported`, `UnsupportedImageFormat` |
+| `413` | Payload too large | `ResponseTooLarge` |
+| `502` | Upstream/instrument failure | `ConnectionFailed`, `InitializationFailed`, `SendFailed`, `ClearFailed`, `BinaryReadFailed`, `MalformedBlock` |
 | `503` | Service unavailable | `ProtocolUnavailable` |
 | `504` | Gateway timeout (no reply) | `NoResponse` |
 
@@ -327,6 +331,82 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/connect `
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/command `
   -ContentType "application/json" -Body '{"command":"*IDN?"}'
 ```
+
+## Image Capture
+
+Many instruments can return a screenshot of their display as an IEEE 488.2
+arbitrary binary block (e.g. `#800012345<...PNG bytes...>`). The application
+parses the block header, validates the image signature, and exposes the raw
+bytes through all three frontends. PNG, BMP, JPEG, and GIF are auto-detected.
+
+The exact SCPI command varies by vendor, for example:
+
+| Vendor (example) | Command |
+| --- | --- |
+| Keysight / Agilent | `:DISPlay:DATA? PNG` |
+| Rohde & Schwarz | `HCOPy:DATA?` |
+| Tektronix | `HARDCopy:DATA?` |
+
+> Consult your instrument's programming manual for the correct command and any
+> required setup (e.g. `:HCOPy:FORMat PNG`).
+
+### GUI
+
+Click **Capture Screen** in the toolbar. The screenshot runs on a background
+thread with a loading overlay, then opens a preview dialog with a **Save…**
+button. Configure the capture command and expected format under
+**Settings → Capture command / Capture format**.
+
+### Console
+
+```
+> image
+Enter SCPI capture command (e.g. :DISPlay:DATA? PNG): :DISPlay:DATA? PNG
+Expected format (png/bmp/jpg/gif, blank to auto-detect):
+Enter output file path (default: capture.png): screen.png
+Saved 18342 bytes (png) to screen.png
+```
+
+### REST API
+
+`POST /api/image` accepts the capture command, an optional `format` hint, an
+optional `timeoutSeconds`, an optional `maxBytes` cap (default 32 MiB), and an
+`encoding` of `base64` (default) or `binary`.
+
+```bash
+# Base64 JSON envelope (default)
+curl -X POST http://127.0.0.1:8080/api/image \
+     -H "Content-Type: application/json" \
+     -d '{"command":":DISPlay:DATA? PNG","format":"png"}'
+
+# Raw bytes written straight to a file
+curl -X POST http://127.0.0.1:8080/api/image \
+     -H "Content-Type: application/json" \
+     -d '{"command":":DISPlay:DATA? PNG","encoding":"binary"}' \
+     --output screen.png
+```
+
+A base64 response includes the decoded payload alongside the standard result
+fields:
+
+```json
+{
+  "success": true,
+  "message": "Captured 18342 bytes (png)",
+  "elapsedMs": 87.4,
+  "code": "None",
+  "severity": "INFO",
+  "format": "png",
+  "bytes": 18342,
+  "encoding": "base64",
+  "dataBase64": "iVBORw0KGgoAAAANSUhEUgAA..."
+}
+```
+
+With `"encoding":"binary"` the endpoint returns `200` with the raw image bytes
+and a matching `Content-Type` (e.g. `image/png`). Oversized responses are
+rejected with `413 ResponseTooLarge`, malformed blocks with `502 MalformedBlock`,
+and unrecognised image data with `422 UnsupportedImageFormat`.
 
 ## Architecture
 

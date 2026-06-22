@@ -61,6 +61,7 @@ private slots:
     void on_disconnectButton_clicked();
     void on_sendButton_clicked();
     void on_clearButton_clicked();
+    void on_captureButton_clicked();
     void on_commandInput_returnPressed();
     void on_protocolCombo_currentIndexChanged(int index);
     void on_actionAbout_triggered();
@@ -88,6 +89,9 @@ private:
     void setupConnections();
     void setupCommandHistory();
     void setupTooltips();
+    // Refreshes the Capture Screen button tooltip to show the active SCPI
+    // command and how to change it.
+    void updateCaptureTooltip();
     void setupOutputTable();
     void applyTheme(theme::Mode mode);
     void updateUIState(bool connected);
@@ -113,6 +117,10 @@ private:
                         std::function<void(const iio::Result&)> onFinished);
     void showError(const QString& message);
     void showSuccess(const QString& message);
+    // Shows the captured image in a modal preview dialog with a Save button.
+    void showImagePreview(const iio::ImageCapture& capture);
+    // Prompts for a path and writes the captured image bytes to disk.
+    void saveCapturedImage(const iio::ImageCapture& capture);
     void navigateCommandHistory(bool up);
     void addToCommandHistory(const QString& command);
     
@@ -136,6 +144,10 @@ private:
     QVector<LogEntry> logEntries;
     // Address of the currently connected instrument (tags I/O rows).
     QString currentAddress;
+
+    // Screen-capture preferences (configured via the Settings dialog).
+    QString captureCommand;  // SCPI command, e.g. ":DISPlay:DATA? PNG"
+    QString captureFormat;   // expected format hint ("" = auto-detect)
 };
 
 #endif // MAINWINDOW_H

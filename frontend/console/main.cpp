@@ -176,6 +176,7 @@ void printCommandHelp() {
     std::cout << "  time       - Toggle showing time to complete (default: on)\n";
     std::cout << "  timeout    - Set timeout (VISA only)\n";
     std::cout << "  clear      - Clear instrument buffer (VISA only)\n";
+    std::cout << "  image      - Capture a screen image from the instrument\n";
     std::cout << "  exit       - Return to protocol menu\n";
     std::cout << "  quit       - Exit program\n";
     std::cout << "\nSCPI Commands:\n";
@@ -337,6 +338,62 @@ void interactiveSession(iio::InstrumentController& controller, iio::Protocol pro
                 std::cout << result.message << "\n";
             } else {
                 reportResult(result);
+            }
+            continue;
+        }
+
+        if (command == "image" || command == "screenshot") {
+            if (!controller.isConnected()) {
+                std::cout << "Not connected. Use 'connect' command first.\n";
+                continue;
+            }
+
+            iio::ImageRequest request;
+
+            std::cout << "Enter SCPI capture command (e.g. :DISPlay:DATA? PNG): ";
+            std::string captureCommand;
+            std::getline(std::cin, captureCommand);
+            if (captureCommand.empty()) {
+                std::cout << "No capture command entered; aborting.\n";
+                continue;
+            }
+            request.command = captureCommand;
+
+            std::cout << "Expected format (png/bmp/jpg/gif, blank to auto-detect): ";
+            std::string format;
+            std::getline(std::cin, format);
+            request.format = format;
+
+            iio::ImageCapture capture;
+            const iio::Result result = controller.captureImage(request, capture);
+            if (!result.success) {
+                reportResult(result);
+                continue;
+            }
+            // Non-fatal warnings (e.g. format mismatch) are surfaced too.
+            if (result.severity == iio::Severity::Warning) {
+                reportResult(result);
+            }
+
+            std::string defaultName =
+                "capture" + iio::image::fileExtension(capture.format);
+            std::cout << "Enter output file path (default: " << defaultName << "): ";
+            std::string path;
+            std::getline(std::cin, path);
+            if (path.empty()) {
+                path = defaultName;
+            }
+
+            const iio::Result saved = controller.saveImage(capture.data, path);
+            if (saved.success) {
+                std::cout << "Saved " << capture.data.size() << " bytes ("
+                          << capture.format << ") to " << path << "\n";
+                if (controller.communicationSettings().showResponseTime) {
+                    std::cout << "Captured in " << std::fixed << std::setprecision(3)
+                              << capture.elapsedMs << " ms\n";
+                }
+            } else {
+                reportResult(saved);
             }
             continue;
         }

@@ -6,6 +6,7 @@ add_executable(scpi_tests
     core/test_scpi_utils.cpp
     core/test_scpi_connection.cpp
     core/test_visa_connection.cpp
+    core/test_ieee4882.cpp
 )
 
 target_link_libraries(scpi_tests PRIVATE

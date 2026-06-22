@@ -1,9 +1,11 @@
 #include "instrument_controller.h"
 
+#include "ieee4882.h"
 #include "tcpip_connection.h"
 #include "visa_connection.h"
 
 #include <chrono>
+#include <fstream>
 
 namespace iio {
 
@@ -217,6 +219,126 @@ Result InstrumentController::clearDevice()
     return result;
 }
 
+Result InstrumentController::captureImage(const ImageRequest& request, ImageCapture& out)
+{
+    out = ImageCapture{};
+
+    if (!isConnected()) {
+        lastError_ = "Not connected";
+        return makeError(ErrorCode::NotConnected, Severity::Error, lastError_);
+    }
+    if (request.command.empty()) {
+        return makeError(ErrorCode::InvalidInput, Severity::Error,
+                         "No capture command configured");
+    }
+
+    const int effectiveTimeout =
+        (request.timeoutSeconds < 0) ? settings_.responseTimeoutSeconds
+                                     : request.timeoutSeconds;
+
+    const auto startTime = std::chrono::steady_clock::now();
+    const auto elapsedMs = [&startTime]() {
+        const auto end = std::chrono::steady_clock::now();
+        return std::chrono::duration<double, std::milli>(end - startTime).count();
+    };
+
+    // Send the capture command (EOL appended like any other command).
+    const std::string payload = request.command + settings_.eol;
+    if (!connection_->sendCommand(payload)) {
+        lastError_ = connection_->getLastError();
+        Result r = makeError(ErrorCode::SendFailed, Severity::Error,
+                             "Failed to send capture command: " + lastError_);
+        r.elapsedMs = elapsedMs();
+        return r;
+    }
+
+    const std::vector<uint8_t> raw =
+        connection_->readBinaryResponse(effectiveTimeout, request.maxBytes);
+    if (raw.empty()) {
+        lastError_ = connection_->getLastError();
+        Result r = makeError(ErrorCode::BinaryReadFailed, Severity::Error,
+                             lastError_.empty()
+                                 ? "No image data received (timeout or error)"
+                                 : "Failed to read image: " + lastError_);
+        r.elapsedMs = elapsedMs();
+        return r;
+    }
+
+    // Guard against an oversized declared block before extracting the payload.
+    if (raw.size() > request.maxBytes) {
+        Result r = makeError(ErrorCode::ResponseTooLarge, Severity::Error,
+                             "Image response exceeds maximum size ("
+                                 + std::to_string(request.maxBytes) + " bytes)");
+        r.elapsedMs = elapsedMs();
+        return r;
+    }
+
+    std::vector<uint8_t> payloadBytes;
+    std::string parseError;
+    if (!ieee4882::extractPayload(raw, payloadBytes, parseError)) {
+        Result r = makeError(ErrorCode::MalformedBlock, Severity::Error,
+                             "Malformed image block: " + parseError);
+        r.elapsedMs = elapsedMs();
+        return r;
+    }
+
+    const std::string detected = image::sniffFormat(payloadBytes);
+    if (detected.empty()) {
+        Result r = makeError(ErrorCode::UnsupportedImageFormat, Severity::Error,
+                             "Captured data is not a recognised image format");
+        r.elapsedMs = elapsedMs();
+        return r;
+    }
+
+    out.data = std::move(payloadBytes);
+    out.format = request.format.empty() ? detected : request.format;
+    out.elapsedMs = elapsedMs();
+
+    Result result;
+    result.success = true;
+    result.message = "Captured " + std::to_string(out.data.size()) + " bytes ("
+                   + detected + ")";
+    result.elapsedMs = out.elapsedMs;
+    // If the caller's format hint disagrees with the sniffed format, flag it as
+    // a non-fatal warning so the data is still usable.
+    if (!request.format.empty() && request.format != detected) {
+        result.severity = Severity::Warning;
+        result.message += "; requested format '" + request.format
+                        + "' differs from detected '" + detected + "'";
+    }
+    return result;
+}
+
+Result InstrumentController::saveImage(const std::vector<uint8_t>& data,
+                                       const std::string& path)
+{
+    if (data.empty()) {
+        return makeError(ErrorCode::InvalidInput, Severity::Error,
+                         "No image data to save");
+    }
+    if (path.empty()) {
+        return makeError(ErrorCode::InvalidInput, Severity::Error,
+                         "No output path provided");
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        return makeError(ErrorCode::InvalidInput, Severity::Error,
+                         "Could not open file for writing: " + path);
+    }
+    file.write(reinterpret_cast<const char*>(data.data()),
+               static_cast<std::streamsize>(data.size()));
+    if (!file) {
+        return makeError(ErrorCode::InvalidInput, Severity::Error,
+                         "Failed to write image file: " + path);
+    }
+
+    Result result;
+    result.success = true;
+    result.message = "Saved " + std::to_string(data.size()) + " bytes to " + path;
+    return result;
+}
+
 void InstrumentController::setCommunicationSettings(const CommunicationSettings& settings)
 {
     settings_ = settings;
@@ -269,6 +391,10 @@ const char* codeLabel(ErrorCode code)
         case ErrorCode::OperationUnsupported: return "OperationUnsupported";
         case ErrorCode::ClearFailed:          return "ClearFailed";
         case ErrorCode::InvalidInput:         return "InvalidInput";
+        case ErrorCode::BinaryReadFailed:     return "BinaryReadFailed";
+        case ErrorCode::MalformedBlock:       return "MalformedBlock";
+        case ErrorCode::UnsupportedImageFormat: return "UnsupportedImageFormat";
+        case ErrorCode::ResponseTooLarge:     return "ResponseTooLarge";
     }
     return "Unknown";
 }
@@ -297,6 +423,40 @@ std::string format(const Result& result)
 }
 
 } // namespace error
+
+namespace image {
+
+std::string sniffFormat(const std::vector<uint8_t>& data)
+{
+    const auto startsWith = [&data](std::initializer_list<uint8_t> sig) {
+        if (data.size() < sig.size()) {
+            return false;
+        }
+        size_t i = 0;
+        for (uint8_t b : sig) {
+            if (data[i++] != b) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (startsWith({0x89, 0x50, 0x4E, 0x47})) return "png"; // \x89 P N G
+    if (startsWith({0x42, 0x4D}))             return "bmp"; // B M
+    if (startsWith({0xFF, 0xD8, 0xFF}))       return "jpg"; // JPEG SOI
+    if (startsWith({0x47, 0x49, 0x46}))       return "gif"; // G I F
+    return "";
+}
+
+std::string fileExtension(const std::string& format)
+{
+    if (format.empty()) {
+        return ".bin";
+    }
+    return "." + format;
+}
+
+} // namespace image
 
 namespace resource {
 

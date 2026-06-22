@@ -76,6 +76,37 @@ TEST(ApiStatusTest, MapsCodesToHttpStatus)
     EXPECT_EQ(iio::api::httpStatusFor(unavailable), 503);
 }
 
+TEST(ApiStatusTest, MapsImageErrorCodesToHttpStatus)
+{
+    Result tooLarge;
+    tooLarge.code = ErrorCode::ResponseTooLarge;
+    EXPECT_EQ(iio::api::httpStatusFor(tooLarge), 413);
+
+    Result malformed;
+    malformed.code = ErrorCode::MalformedBlock;
+    EXPECT_EQ(iio::api::httpStatusFor(malformed), 502);
+
+    Result binaryFail;
+    binaryFail.code = ErrorCode::BinaryReadFailed;
+    EXPECT_EQ(iio::api::httpStatusFor(binaryFail), 502);
+
+    Result badFormat;
+    badFormat.code = ErrorCode::UnsupportedImageFormat;
+    EXPECT_EQ(iio::api::httpStatusFor(badFormat), 422);
+}
+
+TEST(ApiBase64Test, EncodesKnownVectors)
+{
+    using iio::api::base64Encode;
+    EXPECT_EQ(base64Encode({}), "");
+    EXPECT_EQ(base64Encode({'M'}), "TQ==");
+    EXPECT_EQ(base64Encode({'M', 'a'}), "TWE=");
+    EXPECT_EQ(base64Encode({'M', 'a', 'n'}), "TWFu");
+    EXPECT_EQ(base64Encode({'f', 'o', 'o', 'b', 'a', 'r'}), "Zm9vYmFy");
+    // Binary bytes including a PNG signature prefix.
+    EXPECT_EQ(base64Encode({0x89, 0x50, 0x4E, 0x47}), "iVBORw==");
+}
+
 TEST(ApiParseTest, ParsesProtocols)
 {
     Protocol p;

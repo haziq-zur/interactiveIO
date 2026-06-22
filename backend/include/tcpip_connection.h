@@ -22,6 +22,7 @@ public:
     virtual void disconnect() override;
     virtual bool sendCommand(const std::string& command) override;
     virtual std::string readResponse(int timeoutSeconds = 10) override;
+    virtual std::vector<uint8_t> readBinaryResponse(int timeoutSeconds, size_t maxBytes) override;
     virtual bool isConnected() const override;
     virtual std::string getLastError() const override;
     virtual std::string getConnectionType() const override;

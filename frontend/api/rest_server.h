@@ -42,6 +42,9 @@ bool parseProtocol(const std::string& name, Protocol& out);
 bool parseConnectionConfig(const nlohmann::json& body, ConnectionConfig& out,
                            std::string& error);
 
+// Encodes raw bytes as standard (RFC 4648) base64 text.
+std::string base64Encode(const std::vector<uint8_t>& data);
+
 // --- HTTP server -------------------------------------------------------------
 
 // Thin REST facade over an InstrumentController. Every instrument operation is

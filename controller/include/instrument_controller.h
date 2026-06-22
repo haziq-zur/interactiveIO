@@ -1,8 +1,10 @@
 #ifndef INSTRUMENT_CONTROLLER_H
 #define INSTRUMENT_CONTROLLER_H
 
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "instrument_connection.h"
 
@@ -37,7 +39,11 @@ enum class ErrorCode {
     NoResponse,          // a query produced no data (timeout or read error)
     OperationUnsupported,// operation is not valid for the active transport
     ClearFailed,         // VISA device clear failed
-    InvalidInput         // caller-supplied parameters were rejected
+    InvalidInput,        // caller-supplied parameters were rejected
+    BinaryReadFailed,    // a binary/image read failed at the transport level
+    MalformedBlock,      // the IEEE 488.2 binary block could not be parsed
+    UnsupportedImageFormat, // the captured data is not a recognised image
+    ResponseTooLarge     // the response exceeded the configured size cap
 };
 
 // How serious a Result is, used by frontends to choose presentation (icon,
@@ -75,6 +81,39 @@ struct Result {
     ErrorCode code = ErrorCode::None;     // structured failure classification
     Severity severity = Severity::Info;   // how the frontend should present it
 };
+
+// Parameters for capturing a binary image (screen capture) from the instrument.
+struct ImageRequest {
+    // SCPI command that makes the instrument return an image as an IEEE 488.2
+    // binary block (e.g. ":DISPlay:DATA? PNG" or ":DISPlay:DATA?").
+    std::string command;
+    // Expected/desired format hint ("png", "bmp", "jpg"). When empty the format
+    // is inferred from the returned data's magic bytes.
+    std::string format;
+    // Response timeout in seconds; -1 uses the configured value.
+    int timeoutSeconds = -1;
+    // Safety cap on the number of bytes to accept (default 32 MiB).
+    size_t maxBytes = 32u * 1024u * 1024u;
+};
+
+// The decoded result of a successful image capture.
+struct ImageCapture {
+    std::vector<uint8_t> data;  // raw image bytes (payload only, header stripped)
+    std::string format;         // detected format ("png", "bmp", "jpg", or "bin")
+    double elapsedMs = 0.0;     // time to complete the capture, in milliseconds
+};
+
+// --- Image helpers (pure, frontend-agnostic) --------------------------------
+namespace image {
+
+// Returns the lowercase format name inferred from the leading magic bytes
+// ("png", "bmp", "jpg", "gif"), or empty when unrecognised.
+std::string sniffFormat(const std::vector<uint8_t>& data);
+
+// The conventional file extension for a format name (e.g. "png" -> ".png").
+std::string fileExtension(const std::string& format);
+
+} // namespace image
 
 // --- Error model helpers (pure, frontend-agnostic) --------------------------
 // Free helpers so any frontend can render a structured, consistent error
@@ -139,6 +178,18 @@ public:
 
     // Clears the instrument's I/O buffers (VISA device clear).
     Result clearDevice();
+
+    // --- Image capture --------------------------------------------------------
+
+    // Sends `request.command` and reads back a binary image (IEEE 488.2 block).
+    // On success `out` is populated with the image bytes and detected format,
+    // and the returned Result has success == true. On failure the Result
+    // carries a structured ErrorCode (BinaryReadFailed / MalformedBlock /
+    // UnsupportedImageFormat / ResponseTooLarge / NotConnected).
+    Result captureImage(const ImageRequest& request, ImageCapture& out);
+
+    // Writes raw image bytes to `path`. Returns a structured Result on failure.
+    Result saveImage(const std::vector<uint8_t>& data, const std::string& path);
 
     // --- Communication settings ----------------------------------------------
 

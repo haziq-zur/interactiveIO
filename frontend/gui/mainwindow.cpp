@@ -24,6 +24,12 @@
 #include <QClipboard>
 #include <QAction>
 #include <QKeySequence>
+#include <QPixmap>
+#include <QImage>
+#include <QDialog>
+#include <QVBoxLayout>
+#include <QScrollArea>
+#include <QDialogButtonBox>
 #include <climits>
 #include <chrono>
 #include <ctime>
@@ -49,6 +55,7 @@ MainWindow::MainWindow(QWidget *parent)
     // Default the VISA resource to a VXI-11 (TCPIP INSTR) connection template.
     , lastResourceString("TCPIP::192.168.1.100::INSTR")
     , commandHistoryIndex(-1)
+    , captureCommand(":DISPlay:DATA? PNG")
 {
     ui->setupUi(this);
     setupConnections();
@@ -130,6 +137,31 @@ void MainWindow::setupTooltips()
     ui->commandInput->setToolTip("Enter SCPI command here\nUse Up/Down arrows to navigate command history\nCommands ending with '?' are queries that expect a response");
     ui->outputTable->setToolTip("Command and response history with timestamps, instrument and duration");
     ui->addressFilterCombo->setToolTip("Filter the log by instrument address");
+    updateCaptureTooltip();
+}
+
+void MainWindow::updateCaptureTooltip()
+{
+    const QString command = captureCommand.trimmed();
+    const QString shown = command.isEmpty()
+        ? tr("(not set)")
+        : command.toHtmlEscaped();
+    const QString fmt = captureFormat.isEmpty()
+        ? tr("auto-detect")
+        : captureFormat.toUpper();
+
+    ui->captureButton->setToolTip(
+        tr("<b>Capture a screen image from the instrument</b>"
+           "<hr style='margin:2px 0;'>"
+           "Current SCPI command:&nbsp; <code>%1</code><br>"
+           "Expected format:&nbsp; %2"
+           "<hr style='margin:2px 0;'>"
+           "The capture command is <b>not the same for all instruments</b>. "
+           "To change it, open <b>Settings</b> "
+           "(menu&nbsp;\u2192&nbsp;Settings) and edit the "
+           "<i>Screen Image Capture</i> section \u2014 pick an instrument preset "
+           "or enter your device's command.")
+            .arg(shown, fmt));
 }
 
 void MainWindow::setupOutputTable()
@@ -283,6 +315,7 @@ void MainWindow::updateUIState(bool connected)
     ui->sendButton->setEnabled(connected);
     ui->commandInput->setEnabled(connected);
     ui->protocolCombo->setEnabled(!connected);
+    ui->captureButton->setEnabled(connected);
     
     if (connected) {
         const QString color =
@@ -700,6 +733,136 @@ void MainWindow::on_clearButton_clicked()
     appendOutput("Output cleared.", theme::Output::Muted);
 }
 
+void MainWindow::on_captureButton_clicked()
+{
+    if (!controller->isConnected()) {
+        return;
+    }
+
+    const QString command = captureCommand.trimmed();
+    if (command.isEmpty()) {
+        showError("No capture command configured. Set one in Settings first.");
+        return;
+    }
+
+    const QString address = currentAddress;
+    appendIoRow(address, "›  " + command + "  (image capture)", QString(),
+                theme::Output::Accent);
+
+    iio::ImageRequest request;
+    request.command = command.toStdString();
+    request.format = captureFormat.toStdString();
+
+    // Capture is a blocking binary read; run it off the UI thread. The captured
+    // bytes are stashed so the completion handler can preview / save them.
+    auto capture = std::make_shared<iio::ImageCapture>();
+    runWithLoading("Capturing screen image…",
+        [this, request, capture]() {
+            return controller->captureImage(request, *capture);
+        },
+        [this, address, capture](const iio::Result& result) {
+            const QString duration =
+                QString("%1 ms").arg(result.elapsedMs, 0, 'f', 3);
+
+            if (!result.success) {
+                if (result.severity == iio::Severity::Warning) {
+                    appendIoRow(address, QString::fromStdString(result.message),
+                                duration, ErrorHandler::roleFor(result.severity));
+                } else {
+                    errorHandler->handle(result);
+                }
+                return;
+            }
+
+            // Non-fatal warnings (e.g. format mismatch) are still logged.
+            if (result.severity == iio::Severity::Warning) {
+                appendIoRow(address, QString::fromStdString(result.message),
+                            duration, ErrorHandler::roleFor(result.severity));
+            }
+
+            const QString fmt = QString::fromStdString(capture->format);
+            appendIoRow(address,
+                        QString("‹  captured %1 bytes (%2)")
+                            .arg(capture->data.size())
+                            .arg(fmt),
+                        duration, theme::Output::Success);
+
+            showImagePreview(*capture);
+        });
+}
+
+void MainWindow::showImagePreview(const iio::ImageCapture& capture)
+{
+    QImage image;
+    const bool loaded = image.loadFromData(
+        capture.data.data(), static_cast<int>(capture.data.size()),
+        capture.format.empty() ? nullptr : capture.format.c_str());
+
+    if (s_testMode) {
+        return;  // No modal dialogs under automated tests.
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Captured Screen"));
+    dialog.setObjectName("imagePreviewDialog");
+    dialog.setStyleSheet(theme::messageBoxStyleSheet(currentTheme));
+
+    auto *layout = new QVBoxLayout(&dialog);
+
+    if (loaded && !image.isNull()) {
+        auto *scroll = new QScrollArea(&dialog);
+        auto *label = new QLabel(scroll);
+        label->setPixmap(QPixmap::fromImage(image));
+        label->setAlignment(Qt::AlignCenter);
+        scroll->setWidget(label);
+        scroll->setWidgetResizable(true);
+        layout->addWidget(scroll, 1);
+    } else {
+        auto *notice = new QLabel(
+            tr("Captured %1 bytes but the image could not be rendered for preview.")
+                .arg(capture.data.size()),
+            &dialog);
+        notice->setWordWrap(true);
+        layout->addWidget(notice);
+    }
+
+    auto *buttons = new QDialogButtonBox(&dialog);
+    QPushButton *saveButton = buttons->addButton(tr("Save…"), QDialogButtonBox::AcceptRole);
+    buttons->addButton(QDialogButtonBox::Close);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(saveButton, &QPushButton::clicked, this, [this, &capture]() {
+        saveCapturedImage(capture);
+    });
+    layout->addWidget(buttons);
+
+    dialog.resize(640, 480);
+    dialog.exec();
+}
+
+void MainWindow::saveCapturedImage(const iio::ImageCapture& capture)
+{
+    const QString ext =
+        QString::fromStdString(iio::image::fileExtension(capture.format));
+    const QString defaultName =
+        "capture_" + QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss") + ext;
+
+    const QString fileName = s_testMode ? QString() : QFileDialog::getSaveFileName(
+        this, tr("Save Captured Image"), defaultName,
+        tr("Image Files (*.png *.bmp *.jpg *.jpeg *.gif);;All Files (*)"));
+
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    const iio::Result result =
+        controller->saveImage(capture.data, fileName.toStdString());
+    if (result.success) {
+        showSuccess(QString::fromStdString(result.message));
+    } else {
+        errorHandler->handle(result);
+    }
+}
+
 void MainWindow::on_actionSaveLog_triggered()
 {
     if (logEntries.isEmpty()) {
@@ -900,6 +1063,8 @@ void MainWindow::on_actionSettings_triggered()
     dialog.setEolSequence(QString::fromStdString(current.eol));
     dialog.setResponseTimeout(current.responseTimeoutSeconds);
     dialog.setShowResponseTime(current.showResponseTime);
+    dialog.setCaptureCommand(captureCommand);
+    dialog.setCaptureFormat(captureFormat);
 
     if (dialog.exec() != QDialog::Accepted) {
         return;
@@ -910,6 +1075,10 @@ void MainWindow::on_actionSettings_triggered()
     updated.responseTimeoutSeconds = dialog.responseTimeout();
     updated.showResponseTime = dialog.showResponseTime();
     controller->setCommunicationSettings(updated);
+
+    captureCommand = dialog.captureCommand();
+    captureFormat = dialog.captureFormat();
+    updateCaptureTooltip();
 
     // The Duration column is shown only when response timing is enabled.
     ui->outputTable->setColumnHidden(3, !updated.showResponseTime);

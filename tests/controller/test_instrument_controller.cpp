@@ -1,5 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <cstdio>
+#include <fstream>
+#include <vector>
+
 #include "instrument_controller.h"
 
 using iio::InstrumentController;
@@ -173,4 +177,71 @@ TEST(ControllerErrorTest, FormatOmitsCodeWhenNone)
     result.code = ErrorCode::None;
     result.message = "Connected successfully";
     EXPECT_EQ(iio::error::format(result), "[INFO] Connected successfully");
+}
+
+// --- image capture ----------------------------------------------------------
+
+TEST(ControllerImageTest, SniffsKnownFormats)
+{
+    EXPECT_EQ(iio::image::sniffFormat({0x89, 0x50, 0x4E, 0x47, 0x0D}), "png");
+    EXPECT_EQ(iio::image::sniffFormat({0x42, 0x4D, 0x00}), "bmp");
+    EXPECT_EQ(iio::image::sniffFormat({0xFF, 0xD8, 0xFF, 0xE0}), "jpg");
+    EXPECT_EQ(iio::image::sniffFormat({0x47, 0x49, 0x46, 0x38}), "gif");
+    EXPECT_EQ(iio::image::sniffFormat({0x01, 0x02, 0x03}), "");
+    EXPECT_EQ(iio::image::sniffFormat({}), "");
+}
+
+TEST(ControllerImageTest, FileExtensionFromFormat)
+{
+    EXPECT_EQ(iio::image::fileExtension("png"), ".png");
+    EXPECT_EQ(iio::image::fileExtension(""), ".bin");
+}
+
+TEST(ControllerImageTest, CaptureWhenDisconnectedFails)
+{
+    InstrumentController controller;
+    iio::ImageRequest request;
+    request.command = ":DISPlay:DATA? PNG";
+    iio::ImageCapture capture;
+    const Result result = controller.captureImage(request, capture);
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.code, ErrorCode::NotConnected);
+    EXPECT_TRUE(capture.data.empty());
+}
+
+TEST(ControllerImageTest, CaptureWithEmptyCommandRejected)
+{
+    InstrumentController controller;
+    iio::ImageRequest request;  // command left empty
+    iio::ImageCapture capture;
+    const Result result = controller.captureImage(request, capture);
+    EXPECT_FALSE(result.success);
+    // Not connected is checked first, but an empty command must never succeed.
+    EXPECT_NE(result.code, ErrorCode::None);
+}
+
+TEST(ControllerImageTest, SaveImageWritesBytes)
+{
+    InstrumentController controller;
+    const std::vector<uint8_t> data = {0x89, 0x50, 0x4E, 0x47, 0x01, 0x02};
+    const std::string path = "controller_test_image_out.png";
+
+    const Result result = controller.saveImage(data, path);
+    ASSERT_TRUE(result.success) << result.message;
+
+    std::ifstream in(path, std::ios::binary);
+    ASSERT_TRUE(in.good());
+    const std::vector<uint8_t> readBack((std::istreambuf_iterator<char>(in)),
+                                        std::istreambuf_iterator<char>());
+    in.close();
+    std::remove(path.c_str());
+    EXPECT_EQ(readBack, data);
+}
+
+TEST(ControllerImageTest, SaveImageRejectsEmptyData)
+{
+    InstrumentController controller;
+    const Result result = controller.saveImage({}, "ignored.png");
+    EXPECT_FALSE(result.success);
+    EXPECT_EQ(result.code, ErrorCode::InvalidInput);
 }

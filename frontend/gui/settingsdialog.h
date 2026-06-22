@@ -8,6 +8,7 @@ QT_BEGIN_NAMESPACE
 class QComboBox;
 class QSpinBox;
 class QCheckBox;
+class QLineEdit;
 QT_END_NAMESPACE
 
 // Dialog for configuring the active communication channel: the end-of-line
@@ -33,10 +34,21 @@ public:
     bool showResponseTime() const;
     void setShowResponseTime(bool show);
 
+    // SCPI command used to capture a screen image from the instrument.
+    QString captureCommand() const;
+    void setCaptureCommand(const QString& command);
+
+    // Expected image format ("" = auto-detect, or "png"/"bmp"/"jpg"/"gif").
+    QString captureFormat() const;
+    void setCaptureFormat(const QString& format);
+
 private:
     QComboBox *eolCombo;
     QSpinBox *timeoutSpinBox;
     QCheckBox *showTimeCheckBox;
+    QComboBox *capturePresetCombo;
+    QLineEdit *captureCommandEdit;
+    QComboBox *captureFormatCombo;
 };
 
 #endif // SETTINGSDIALOG_H

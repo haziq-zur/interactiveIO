@@ -1,5 +1,6 @@
 #include "tcpip_connection.h"
 #include "platform/socket_wrapper.h"
+#include "ieee4882.h"
 #include <iostream>
 #include <sstream>
 
@@ -135,6 +136,80 @@ std::string TCPIPConnection::readResponse(int timeoutSeconds)
     }
 
     return "";
+}
+
+std::vector<uint8_t> TCPIPConnection::readBinaryResponse(int timeoutSeconds, size_t maxBytes)
+{
+    std::vector<uint8_t> buffer;
+
+    if (!pImpl_->connected) {
+        setLastError("Not connected");
+        return buffer;
+    }
+
+    pImpl_->socket.setTimeout(timeoutSeconds * 1000);
+
+    // Read raw chunks until the full IEEE 488.2 block has arrived, the size cap
+    // is hit, or the peer times out / closes. `needed` is the total block size
+    // (header + payload) once it can be determined from the header.
+    char chunk[65536];
+    size_t needed = 0;
+
+    while (true) {
+        size_t got = 0;
+        if (!pImpl_->socket.receive(chunk, sizeof(chunk), got)) {
+            std::string error = pImpl_->socket.getLastError();
+            if (error.find("timeout") != std::string::npos
+                || error.find("Timeout") != std::string::npos) {
+                setLastError("Timeout waiting for response");
+            } else {
+                setLastError(error);
+            }
+            break;
+        }
+        if (got == 0) {
+            setLastError("Connection closed");
+            pImpl_->connected = false;
+            connected_ = false;
+            break;
+        }
+
+        buffer.insert(buffer.end(), chunk, chunk + got);
+
+        if (needed == 0) {
+            ieee4882::BlockHeader header;
+            std::string error;
+            if (!ieee4882::parseHeader(buffer.data(), buffer.size(), header, error)) {
+                // Not a binary block (e.g. a plain text error response). Return
+                // what we have and let the caller decide.
+                break;
+            }
+            if (header.headerComplete && !header.indefinite) {
+                needed = header.headerLength + header.payloadLength;
+                if (needed > maxBytes) {
+                    setLastError("Binary response exceeds maximum size ("
+                                 + std::to_string(maxBytes) + " bytes)");
+                    return buffer;
+                }
+            } else if (header.headerComplete && header.indefinite) {
+                // Indefinite block: read until the trailing newline terminator.
+                if (!buffer.empty() && buffer.back() == '\n') {
+                    break;
+                }
+            }
+        }
+
+        if (needed > 0 && buffer.size() >= needed) {
+            break;
+        }
+        if (buffer.size() >= maxBytes) {
+            setLastError("Binary response exceeds maximum size ("
+                         + std::to_string(maxBytes) + " bytes)");
+            break;
+        }
+    }
+
+    return buffer;
 }
 
 bool TCPIPConnection::isConnected() const

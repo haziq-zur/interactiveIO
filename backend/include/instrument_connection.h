@@ -1,7 +1,9 @@
 #ifndef INSTRUMENT_CONNECTION_H
 #define INSTRUMENT_CONNECTION_H
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 /**
  * @brief Abstract base class for instrument connections
@@ -45,6 +47,21 @@ public:
      * @return Response string (empty if timeout or error)
      */
     virtual std::string readResponse(int timeoutSeconds = 10) = 0;
+
+    /**
+     * @brief Read a raw binary response from the instrument
+     *
+     * Unlike readResponse(), this performs no text processing: it returns the
+     * exact bytes received, which may include NUL and newline characters (as in
+     * an IEEE 488.2 binary block / screen capture). When the response is a
+     * definite-length block the read continues until the full payload has
+     * arrived. Reading stops if `maxBytes` is reached to bound memory use.
+     *
+     * @param timeoutSeconds Timeout in seconds
+     * @param maxBytes Maximum number of bytes to accumulate (safety cap)
+     * @return Raw bytes received (empty on timeout or error)
+     */
+    virtual std::vector<uint8_t> readBinaryResponse(int timeoutSeconds, size_t maxBytes) = 0;
 
     /**
      * @brief Send query and read response (convenience method)

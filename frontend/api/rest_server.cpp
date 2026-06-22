@@ -98,6 +98,10 @@ int httpStatusFor(const Result& result)
         case ErrorCode::InitializationFailed:
         case ErrorCode::SendFailed:
         case ErrorCode::ClearFailed:          return 502; // Bad Gateway
+        case ErrorCode::BinaryReadFailed:     return 502; // Bad Gateway
+        case ErrorCode::MalformedBlock:       return 502; // Bad Gateway
+        case ErrorCode::UnsupportedImageFormat: return 422; // Unprocessable Entity
+        case ErrorCode::ResponseTooLarge:     return 413; // Payload Too Large
         case ErrorCode::None:                 return 500; // Internal Server Error
     }
     return 500;
@@ -148,6 +152,44 @@ bool parseConnectionConfig(const json& body, ConnectionConfig& out, std::string&
         }
     }
     return true;
+}
+
+std::string base64Encode(const std::vector<uint8_t>& data)
+{
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+
+    size_t i = 0;
+    while (i + 2 < data.size()) {
+        const uint32_t n = (static_cast<uint32_t>(data[i]) << 16)
+                         | (static_cast<uint32_t>(data[i + 1]) << 8)
+                         | static_cast<uint32_t>(data[i + 2]);
+        out += table[(n >> 18) & 0x3F];
+        out += table[(n >> 12) & 0x3F];
+        out += table[(n >> 6) & 0x3F];
+        out += table[n & 0x3F];
+        i += 3;
+    }
+
+    const size_t remaining = data.size() - i;
+    if (remaining == 1) {
+        const uint32_t n = static_cast<uint32_t>(data[i]) << 16;
+        out += table[(n >> 18) & 0x3F];
+        out += table[(n >> 12) & 0x3F];
+        out += '=';
+        out += '=';
+    } else if (remaining == 2) {
+        const uint32_t n = (static_cast<uint32_t>(data[i]) << 16)
+                         | (static_cast<uint32_t>(data[i + 1]) << 8);
+        out += table[(n >> 18) & 0x3F];
+        out += table[(n >> 12) & 0x3F];
+        out += table[(n >> 6) & 0x3F];
+        out += '=';
+    }
+    return out;
 }
 
 RestServer::RestServer(InstrumentController& controller)
@@ -230,6 +272,67 @@ void RestServer::registerRoutes()
         std::lock_guard<std::mutex> lock(mutex_);
         const Result result = controller_.clearDevice();
         writeJson(res, httpStatusFor(result), resultToJson(result));
+    });
+
+    // Capture a screen image from the instrument.
+    // Body: {"command":":DISP:DATA? PNG","format":"png","timeoutSeconds":10,
+    //        "maxBytes":33554432,"encoding":"base64"|"binary"}
+    srv.Post("/api/image", [this](const httplib::Request& req, httplib::Response& res) {
+        json body;
+        if (!tryParseBody(req, res, body)) {
+            return;
+        }
+        if (!body.contains("command") || !body["command"].is_string()
+            || body["command"].get<std::string>().empty()) {
+            writeJson(res, 400,
+                      errorBody("Missing or empty string field 'command'",
+                                ErrorCode::InvalidInput));
+            return;
+        }
+
+        ImageRequest request;
+        request.command = body["command"].get<std::string>();
+        request.format = body.value("format", std::string());
+        request.timeoutSeconds = body.value("timeoutSeconds", -1);
+        if (body.contains("maxBytes") && body["maxBytes"].is_number_unsigned()) {
+            request.maxBytes = body["maxBytes"].get<size_t>();
+        }
+        const std::string encoding = toLower(body.value("encoding", std::string("base64")));
+
+        ImageCapture capture;
+        Result result;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            result = controller_.captureImage(request, capture);
+        }
+        if (!result.success) {
+            writeJson(res, httpStatusFor(result), resultToJson(result));
+            return;
+        }
+
+        if (encoding == "binary") {
+            // Stream the raw image bytes with the matching content type.
+            const std::string mime =
+                capture.format == "png"  ? "image/png"
+                : capture.format == "bmp" ? "image/bmp"
+                : capture.format == "jpg" ? "image/jpeg"
+                : capture.format == "gif" ? "image/gif"
+                : "application/octet-stream";
+            res.status = 200;
+            res.set_content(
+                std::string(reinterpret_cast<const char*>(capture.data.data()),
+                            capture.data.size()),
+                mime);
+            return;
+        }
+
+        // Default: JSON envelope with base64-encoded payload.
+        json j = resultToJson(result);
+        j["format"] = capture.format;
+        j["bytes"] = capture.data.size();
+        j["encoding"] = "base64";
+        j["dataBase64"] = base64Encode(capture.data);
+        writeJson(res, 200, j);
     });
 
     // Set the VISA I/O timeout. Body: {"timeoutMs":2000}

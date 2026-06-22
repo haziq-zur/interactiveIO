@@ -9,6 +9,7 @@
 add_library(instrument_core
     core/tcpip_connection.cpp
     core/visa_connection.cpp
+    core/ieee4882.cpp
     platform/socket_wrapper.cpp
     platform/dynamic_loader.cpp
 )
