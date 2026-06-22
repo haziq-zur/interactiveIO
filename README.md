@@ -23,8 +23,9 @@ Interactive SCPI instrument communication tool with unified interface supporting
 ## Platform Support
 
 ### Windows ✅
-- Visual Studio 2022 (MSVC 19.44+)
-- CMake 3.15+
+- MinGW-w64 (GCC 13.x, bundled with Qt) or MSVC 2022
+- Qt 6.10+ (Core, Widgets, Test, Svg) for the GUI
+- CMake 3.15+ and Ninja
 - Uses Winsock2 for networking
 - Loads `visa64.dll` or `visa32.dll` dynamically
 
@@ -65,13 +66,16 @@ Then drive the instrument from any HTTP client (see [REST API](#rest-api)).
 **Or create a distribution package:**
 
 ```powershell
-package.bat
+.\scripts\package.ps1
 ```
 
-This creates a standalone, self-contained executable in `dist/` folder with all documentation. The packaged application:
-- ✅ Works on any Windows 7+ machine
-- ✅ No runtime dependencies for TCP/IP connections  
-- ✅ No installation required - just copy and run
+This bundles the GUI together with every runtime dependency it needs (Qt DLLs +
+plugins via `windeployqt`, plus the MinGW runtime DLLs) and the standalone
+console/API executables, then compresses everything into
+`dist\interactiveIO-v<version>-Windows-x64.zip`. The packaged application:
+- ✅ Runs on any Windows 10+ machine with no Qt or compiler installed
+- ✅ No runtime dependencies for TCP/IP connections
+- ✅ No installation required - just extract and run
 - ⚠️ VISA support requires NI-VISA installation (optional)
 
 ### Linux
@@ -87,8 +91,6 @@ cmake --build build
 # Run tests
 cd build && ctest
 ```
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for distribution details and [CROSS_PLATFORM_STATUS.md](CROSS_PLATFORM_STATUS.md) for implementation details.
 
 The application will display a menu to select your communication protocol:
 
@@ -422,7 +424,6 @@ IInstrumentConnection (Base Interface)
 
 Both protocols are always compiled. VISA support uses dynamic DLL loading, so the application works even without NI-VISA installed.
 
-See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for detailed architecture documentation.
 
 ## Building with CMake
 
@@ -431,7 +432,7 @@ See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for detailed architecture d
 - A C++17 compatible compiler (MSVC, MinGW-w64, or Clang)
 - Windows SDK (for Winsock2)
 - **Network access on first configure**: the REST API fetches `cpp-httplib` and `nlohmann/json` via CMake `FetchContent` (same as Google Test). Disable the API with `-DBUILD_API=OFF` to build offline.
-- **Optional**: Qt6 6.6.1+ (for GUI application) - Download from https://www.qt.io/download-qt-installer
+- **Optional**: Qt6 6.10+ with the Svg module (for GUI application) - Download from https://www.qt.io/download-qt-installer
 - **Optional**: NI-VISA or compatible VISA library (for VISA protocol support)
 
 ### Build Instructions
@@ -440,24 +441,24 @@ See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for detailed architecture d
 
 **Release Build:**
 ```bash
-build.bat
+.\scripts\build.bat
 ```
 
 **Debug Build with Tests:**
 ```bash
-build_debug.bat
+.\scripts\build_debug.bat
 ```
 
 **Custom Build:**
 ```bash
-build.bat [debug|release] [test]
+.\scripts\build.bat [debug|release] [test]
 ```
 
 Examples:
-- `build.bat` - Release build
-- `build.bat debug` - Debug build
-- `build.bat release test` - Release build + run tests
-- `build.bat debug test` - Debug build + run tests
+- `scripts\build.bat` - Release build
+- `scripts\build.bat debug` - Debug build
+- `scripts\build.bat release test` - Release build + run tests
+- `scripts\build.bat debug test` - Debug build + run tests
 
 #### Using CMake GUI or Command Line:
 
@@ -468,17 +469,25 @@ Examples:
    ```
 
 2. **Configure the project:**
+
+   The recommended way is the bundled CMake preset (MinGW + Qt + Ninja):
+   ```bash
+   cmake --preset mingw-qt
+   cmake --build --preset mingw-qt
+   ```
+
+   Or configure manually:
    ```bash
    cmake ..
    ```
    
    Or specify a generator explicitly:
    ```bash
-   cmake -G "Visual Studio 17 2022" ..
+   cmake -G "Ninja" ..
    # or
    cmake -G "MinGW Makefiles" ..
    # or
-   cmake -G "Ninja" ..
+   cmake -G "Visual Studio 17 2022" ..
    ```
 
 3. **Build the project:**
@@ -507,12 +516,12 @@ Examples:
    
    If Qt6 is not automatically detected, specify Qt6_DIR:
    ```bash
-   cmake .. -DQt6_DIR="C:/Qt/6.6.1/msvc2019_64/lib/cmake/Qt6"
+   cmake .. -DQt6_DIR="C:/Qt/6.10.2/mingw_64/lib/cmake/Qt6"
    ```
    
    Or set environment variable:
    ```powershell
-   $env:Qt6_DIR = "C:\Qt\6.6.1\msvc2019_64"
+   $env:Qt6_DIR = "C:\Qt\6.10.2\mingw_64"
    cmake ..
    ```
    
@@ -520,8 +529,7 @@ Examples:
    ```bash
    cmake .. -DBUILD_GUI=OFF
    ```
-   
-   See [GUI_README.md](GUI_README.md) for detailed GUI documentation.
+
 
 #### Alternative: One-line build command
 ```bash
@@ -536,7 +544,6 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Debug && cmake --build build --config Deb
 
 The project supports the VISA (Virtual Instrument Software Architecture) protocol for communication with instruments over various interfaces including GPIB, USB, Ethernet (VXI-11), and serial.
 
-**📖 For detailed VISA configuration instructions, see [VISA_GUIDE.md](VISA_GUIDE.md)**
 
 ### Enabling VISA Support
 
@@ -600,7 +607,7 @@ The project includes comprehensive unit tests using Google Test framework. Tests
 
 **Using batch script:**
 ```bash
-build.bat debug test
+.\scripts\build.bat debug test
 ```
 
 **Using CMake/CTest:**
@@ -653,22 +660,26 @@ cmake --install build --prefix <installation_path>
 
 ```
 interactiveIO/
-├── interactiveIO/
-│   ├── interactiveIO.cpp         # Main TCP/IP application
-│   ├── interactiveIO_visa.cpp    # VISA application (optional)
-│   ├── scpi_core.h               # TCP/IP connection class header
-│   ├── scpi_core.cpp             # TCP/IP connection implementation
-│   ├── visa_connection.h         # VISA connection class header
-│   └── visa_connection.cpp       # VISA connection implementation
-├── tests/
-│   ├── CMakeLists.txt            # Test build configuration
-│   ├── test_scpi_utils.cpp       # Utility functions tests
-│   ├── test_scpi_connection.cpp  # TCP/IP connection tests
-│   └── test_visa_connection.cpp  # VISA connection tests
-├── build/                        # Build output directory (generated)
-├── CMakeLists.txt                # Main CMake configuration
-├── build.bat                     # Windows build script
-├── build_debug.bat               # Quick debug build script
+├── backend/                      # Instrument transports (pure C++, no Qt)
+│   ├── include/                  # IInstrumentConnection, TCP/IP, VISA, IEEE 488.2
+│   └── core/                     # tcpip_connection, visa_connection, ieee4882, sockets
+├── controller/                   # iio::InstrumentController bridge (no Qt)
+│   ├── include/instrument_controller.h
+│   └── instrument_controller.cpp
+├── frontend/                     # User-facing apps (depend only on the controller)
+│   ├── console/main.cpp          # Console application (interactiveIO)
+│   ├── gui/                      # Qt6 GUI (interactiveIO-gui) + resources/ icon
+│   └── api/                      # REST API server (interactiveIO-api)
+├── tests/                        # Google Test + Qt Test suites
+│   ├── core/                     # backend tests
+│   ├── controller/               # controller tests
+│   ├── api/                      # REST API tests
+│   └── gui/                      # GUI tests
+├── scripts/                      # build.bat, build_debug.bat, package.ps1
+├── docs/                         # Guides (deployment, VISA, USB, GUI, cross-platform)
+├── cmake/iio_version.h.in        # Version header generated at configure time
+├── CMakeLists.txt                # Top-level CMake configuration
+├── CMakePresets.json             # mingw-qt preset
 └── README.md                     # This file
 ```
 
@@ -741,7 +752,6 @@ The Qt6-based GUI provides an intuitive interface for instrument communication:
 - Comprehensive tooltips for all controls
 - Status bar with contextual messages
 
-For detailed GUI documentation, see [GUI_README.md](GUI_README.md).
 
 ### TCP/IP Communication (interactiveIO.exe)
 
