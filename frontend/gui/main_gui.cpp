@@ -3,6 +3,7 @@
 #include "iio_version.h"
 #include <QApplication>
 #include <QFont>
+#include <QIcon>
 #include <QStyleFactory>
 
 // =============================================================================
@@ -24,6 +25,9 @@ int main(int argc, char *argv[])
 
     // Fusion is the most stylesheet-friendly built-in style.
     app.setStyle(QStyleFactory::create("Fusion"));
+
+    // Application / taskbar icon (SVG from the Qt resource bundle).
+    app.setWindowIcon(QIcon(":/icons/app_icon.svg"));
 
     // Base application font.
     QFont appFont("Segoe UI", 10);

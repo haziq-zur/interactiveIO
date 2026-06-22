@@ -6,6 +6,11 @@ project(interactiveIO
     LANGUAGES CXX
 )
 
+# Enable the Windows resource compiler so executables can embed an .ico icon.
+if(WIN32)
+    enable_language(RC)
+endif()
+
 # -----------------------------------------------------------------------------
 # Global configuration
 # -----------------------------------------------------------------------------
@@ -136,6 +141,9 @@ endif()
 if(BUILD_GUI)
     find_package(Qt6 COMPONENTS Core Widgets Test QUIET)
     if(Qt6_FOUND)
+        # Optional: the Svg module provides the icon engine that renders the
+        # SVG application / taskbar icon. The GUI still builds without it.
+        find_package(Qt6 COMPONENTS Svg QUIET)
         message(STATUS "Qt6 found - GUI application and GUI tests will be built")
     else()
         message(WARNING "Qt6 not found - GUI application and GUI tests will be skipped")

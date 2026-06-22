@@ -6,12 +6,21 @@
 # fully isolated from the instrument communication logic.
 # -----------------------------------------------------------------------------
 
+# Windows-only resource that embeds the application icon (.ico) into each
+# shipped executable. Left empty on other platforms and for the test targets.
+if(WIN32)
+    set(IIO_APP_ICON_RC "${CMAKE_CURRENT_SOURCE_DIR}/gui/resources/app_icon.rc")
+else()
+    set(IIO_APP_ICON_RC "")
+endif()
+
 # -----------------------------------------------------------------------------
 # Console application
 # -----------------------------------------------------------------------------
 
 add_executable(interactiveIO
     console/main.cpp
+    ${IIO_APP_ICON_RC}
 )
 
 target_link_libraries(interactiveIO PRIVATE instrument_controller)
@@ -73,10 +82,18 @@ if(BUILD_GUI AND Qt6_FOUND)
         Qt6::Widgets
     )
 
+    # Link Qt Svg when available so QIcon can render the SVG app icon. Guarded
+    # so the GUI still builds on Qt installs without the Svg module.
+    if(TARGET Qt6::Svg)
+        target_link_libraries(interactiveIO_gui PUBLIC Qt6::Svg)
+        target_compile_definitions(interactiveIO_gui PUBLIC IIO_HAVE_QTSVG)
+    endif()
+
     # GUI executable: entry point + resources, linking the shared GUI library.
     add_executable(interactiveIO-gui WIN32
         gui/main_gui.cpp
         gui/resources.qrc
+        ${IIO_APP_ICON_RC}
     )
 
     set_target_properties(interactiveIO-gui PROPERTIES
@@ -116,6 +133,7 @@ if(BUILD_API)
 
     add_executable(interactiveIO-api
         api/main_api.cpp
+        ${IIO_APP_ICON_RC}
     )
 
     target_link_libraries(interactiveIO-api PRIVATE interactiveIO_api)

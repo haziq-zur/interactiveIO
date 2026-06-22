@@ -1,0 +1,4 @@
+// Windows resource script: embeds the application icon into the executable so
+// it shows in Explorer, the taskbar and the title bar. The numeric id 1 makes
+// this the default application icon Windows picks for the .exe.
+1 ICON "app_icon.ico"

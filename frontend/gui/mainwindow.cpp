@@ -26,6 +26,7 @@
 #include <QAction>
 #include <QKeySequence>
 #include <QPixmap>
+#include <QIcon>
 #include <QImage>
 #include <QDialog>
 #include <QVBoxLayout>
@@ -88,6 +89,9 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     setupConnections();
+
+    // Window / title-bar icon (SVG from the Qt resource bundle).
+    setWindowIcon(QIcon(":/icons/app_icon.svg"));
 
     // Load the log-encryption password (default on first run) so Save/Open Log
     // can use it automatically without prompting.

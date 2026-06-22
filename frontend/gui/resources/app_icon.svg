@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="screen" x1="44" y1="60" x2="212" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d0f14"/>
+      <stop offset="1" stop-color="#1c2029"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Instrument screen -->
+  <rect x="44" y="60" width="168" height="120" rx="16"
+        fill="url(#screen)" stroke="#818cf8" stroke-width="3"/>
+
+  <!-- Grid lines -->
+  <g stroke="#363b4a" stroke-width="2" opacity="0.7">
+    <line x1="86" y1="64" x2="86" y2="176"/>
+    <line x1="128" y1="64" x2="128" y2="176"/>
+    <line x1="170" y1="64" x2="170" y2="176"/>
+    <line x1="48" y1="92" x2="208" y2="92"/>
+    <line x1="48" y1="120" x2="208" y2="120"/>
+    <line x1="48" y1="148" x2="208" y2="148"/>
+  </g>
+
+  <!-- Waveform (SCPI signal) -->
+  <path d="M52 148 L78 148 L92 100 L106 148 L120 148 L134 76 L148 148 L168 148 L182 116 L208 116"
+        fill="none" stroke="#34d399" stroke-width="6"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Connector base / instrument stand -->
+  <rect x="108" y="180" width="40" height="18" rx="4" fill="#c7d2fe"/>
+  <rect x="84" y="198" width="88" height="14" rx="7" fill="#a5b4fc"/>
+</svg>
