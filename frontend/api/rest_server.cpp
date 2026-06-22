@@ -2,6 +2,8 @@
 
 #include <httplib.h>
 
+#include "iio_version.h"
+
 #include <algorithm>
 #include <cctype>
 
@@ -209,7 +211,8 @@ void RestServer::registerRoutes()
         writeJson(res, 200,
                   json{{"status", "ok"},
                        {"service", "interactiveIO"},
-                       {"version", "1.0.0"}});
+                       {"version", IIO_VERSION_STRING},
+                       {"build", IIO_VERSION_FULL}});
     });
 
     // Current connection state.

@@ -4,6 +4,7 @@
 #include "settingsdialog.h"
 #include "logcrypto.h"
 #include "instrument_controller.h"
+#include "iio_version.h"
 #include "theme.h"
 #include "loadingoverlay.h"
 #include "errorhandler.h"
@@ -1105,7 +1106,7 @@ void MainWindow::on_actionAbout_triggered()
 
     QString aboutText =
         "<h2 style='color: #818cf8;'>Interactive Instrument Communication Tool</h2>"
-        "<p style='color: " + bodyColor + ";'><b>Version:</b> 1.0.0</p>"
+        "<p style='color: " + bodyColor + ";'><b>Version:</b> " IIO_VERSION_FULL "</p>"
         "<p style='color: " + bodyColor + ";'>A modern GUI application for communicating with SCPI-compatible instruments.</p>"
         "<br>"
         "<p style='color: #34d399;'><b>Supported Protocols:</b></p>"

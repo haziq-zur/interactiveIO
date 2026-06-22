@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "instrument_controller.h"
+#include "iio_version.h"
 
 // =============================================================================
 // Console frontend.
@@ -40,6 +41,7 @@ static void reportResult(const iio::Result& result)
 void printBanner() {
     std::cout << "=================================================\n";
     std::cout << "  Interactive Instrument Communication Tool\n";
+    std::cout << "  Version " << IIO_VERSION_FULL << "\n";
     std::cout << "  Supports: TCP/IP Socket & VISA Protocols\n";
     std::cout << "=================================================\n\n";
 }

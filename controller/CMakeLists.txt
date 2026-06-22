@@ -19,4 +19,5 @@ target_include_directories(instrument_controller PUBLIC
 
 target_link_libraries(instrument_controller PUBLIC
     instrument_core
+    iio_version
 )

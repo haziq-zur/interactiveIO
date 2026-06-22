@@ -52,6 +52,55 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>")
 
 # -----------------------------------------------------------------------------
+# Versioning: generate a single-source-of-truth version header
+#
+# The numeric version comes from the project() VERSION above. Git metadata
+# (commit hash + branch) is captured at configure time when available so builds
+# can be traced back to a revision. Re-run CMake to refresh the git fields.
+# -----------------------------------------------------------------------------
+
+set(IIO_GIT_COMMIT "")
+set(IIO_GIT_BRANCH "")
+
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE IIO_GIT_COMMIT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE IIO_GIT_BRANCH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+endif()
+
+if(IIO_GIT_COMMIT STREQUAL "")
+    set(IIO_VERSION_FULL "${PROJECT_VERSION}")
+else()
+    set(IIO_VERSION_FULL "${PROJECT_VERSION}+${IIO_GIT_COMMIT}")
+endif()
+
+set(IIO_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated/include")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/iio_version.h.in"
+    "${IIO_GENERATED_INCLUDE_DIR}/iio_version.h"
+    @ONLY
+)
+
+# INTERFACE target carrying the generated header's include path. Any target that
+# links it (directly or transitively) can #include "iio_version.h".
+add_library(iio_version INTERFACE)
+target_include_directories(iio_version INTERFACE "${IIO_GENERATED_INCLUDE_DIR}")
+
+message(STATUS "Project version: ${IIO_VERSION_FULL} (branch: ${IIO_GIT_BRANCH})")
+
+# -----------------------------------------------------------------------------
 # Dependencies
 # -----------------------------------------------------------------------------
 

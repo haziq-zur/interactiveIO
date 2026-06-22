@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "theme.h"
+#include "iio_version.h"
 #include <QApplication>
 #include <QFont>
 #include <QStyleFactory>
@@ -18,7 +19,7 @@ int main(int argc, char *argv[])
 
     // Application metadata (also used by QSettings for persistence).
     app.setApplicationName("Interactive Instrument Communication Tool");
-    app.setApplicationVersion("1.0.0");
+    app.setApplicationVersion(IIO_VERSION_STRING);
     app.setOrganizationName("InteractiveIO");
 
     // Fusion is the most stylesheet-friendly built-in style.
