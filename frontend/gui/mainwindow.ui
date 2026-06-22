@@ -289,6 +289,19 @@
              <number>10</number>
             </property>
             <item>
+             <widget class="QComboBox" name="commandPresetCombo">
+              <property name="cursor">
+               <cursorShape>PointingHandCursor</cursorShape>
+              </property>
+              <property name="minimumContentsLength">
+               <number>14</number>
+              </property>
+              <property name="sizeAdjustPolicy">
+               <enum>QComboBox::AdjustToContents</enum>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QLineEdit" name="commandInput">
               <property name="placeholderText">
                <string>Enter SCPI command  —  e.g. *IDN?  or  :MEAS:VOLT?</string>

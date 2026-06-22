@@ -88,6 +88,8 @@ private:
     
     void setupConnections();
     void setupCommandHistory();
+    // Populates the common-SCPI-command dropdown next to the input box.
+    void setupCommandPresets();
     void setupTooltips();
     // Refreshes the Capture Screen button tooltip to show the active SCPI
     // command and how to change it.

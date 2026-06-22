@@ -125,6 +125,75 @@ void MainWindow::setupConnections()
 
     // Install event filter for command history navigation
     ui->commandInput->installEventFilter(this);
+
+    setupCommandPresets();
+}
+
+void MainWindow::setupCommandPresets()
+{
+    // The reserved IEEE 488.2 "common commands" (the *XXX set) plus a few
+    // universally supported SCPI system queries. Each entry pairs a readable
+    // label with the literal command placed into the input box on selection.
+    struct CommandPreset {
+        const char *label;    // shown in the dropdown
+        const char *command;  // text inserted into the command input
+    };
+
+    static const CommandPreset kCommonCommands[] = {
+        // IEEE 488.2 mandated common commands (reserved "*" set).
+        {"*IDN?  —  Identification query",        "*IDN?"},
+        {"*RST  —  Reset to defaults",            "*RST"},
+        {"*CLS  —  Clear status",                 "*CLS"},
+        {"*ESE  —  Event status enable",          "*ESE "},
+        {"*ESE?  —  Event status enable query",   "*ESE?"},
+        {"*ESR?  —  Event status register query", "*ESR?"},
+        {"*OPC  —  Operation complete",           "*OPC"},
+        {"*OPC?  —  Operation complete query",    "*OPC?"},
+        {"*OPT?  —  Installed options query",     "*OPT?"},
+        {"*PSC  —  Power-on status clear",        "*PSC "},
+        {"*PSC?  —  Power-on status clear query", "*PSC?"},
+        {"*RCL  —  Recall stored state",          "*RCL "},
+        {"*SAV  —  Save current state",           "*SAV "},
+        {"*SRE  —  Service request enable",       "*SRE "},
+        {"*SRE?  —  Service request enable query","*SRE?"},
+        {"*STB?  —  Status byte query",           "*STB?"},
+        {"*TRG  —  Trigger",                      "*TRG"},
+        {"*TST?  —  Self-test query",             "*TST?"},
+        {"*WAI  —  Wait to continue",             "*WAI"},
+        // Common SCPI system queries (widely supported).
+        {"SYSTem:ERRor?  —  Next error in queue", ":SYSTem:ERRor?"},
+        {"SYSTem:VERSion?  —  SCPI version",      ":SYSTem:VERSion?"},
+        {"STATus:OPERation?  —  Operation status",":STATus:OPERation?"},
+    };
+
+    ui->commandPresetCombo->clear();
+    // First entry is a non-selectable prompt so the box reads as a menu.
+    ui->commandPresetCombo->addItem(tr("Common SCPI \u25be"), QString());
+    for (const auto& preset : kCommonCommands) {
+        ui->commandPresetCombo->addItem(tr(preset.label),
+                                        QString::fromLatin1(preset.command));
+    }
+    ui->commandPresetCombo->setToolTip(
+        tr("Reserved IEEE 488.2 common commands and standard SCPI queries.\n"
+           "Select one to load it into the input box, then press Send / Enter.\n"
+           "Commands taking a parameter (e.g. *SAV) are loaded with a trailing\n"
+           "space so you can type the value."));
+
+    // Selecting a command loads it into the input for review (some commands such
+    // as *RST are destructive), then resets the menu back to its prompt.
+    connect(ui->commandPresetCombo, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int index) {
+        const QString command = ui->commandPresetCombo->itemData(index).toString();
+        if (command.isEmpty()) {
+            return;  // The prompt row.
+        }
+        ui->commandInput->setText(command);
+        ui->commandInput->setFocus();
+        // Place the cursor at the end so parameters can be typed immediately.
+        ui->commandInput->end(false);
+        // Reset the selector back to the prompt for the next pick.
+        ui->commandPresetCombo->setCurrentIndex(0);
+    });
 }
 
 void MainWindow::setupTooltips()
@@ -314,6 +383,7 @@ void MainWindow::updateUIState(bool connected)
     ui->disconnectButton->setEnabled(connected);
     ui->sendButton->setEnabled(connected);
     ui->commandInput->setEnabled(connected);
+    ui->commandPresetCombo->setEnabled(connected);
     ui->protocolCombo->setEnabled(!connected);
     ui->captureButton->setEnabled(connected);
     
@@ -686,8 +756,10 @@ void MainWindow::on_commandInput_returnPressed()
     const bool isQuery = command.contains('?');
     const QString address = currentAddress;
 
-    // Clear the input immediately for snappy feedback.
-    ui->commandInput->clear();
+    // Keep the command in the input after a successful send so it can be
+    // re-sent or tweaked without retyping. It is select-highlighted on success
+    // so typing a new command replaces it immediately.
+    const QString sentCommand = command;
 
     // Queries block until a response (or timeout) arrives, so run them on a
     // worker thread with the loading overlay. Plain writes return quickly but
@@ -695,7 +767,7 @@ void MainWindow::on_commandInput_returnPressed()
     const QString busy = isQuery ? "Waiting for response…" : "Sending command…";
     runWithLoading(busy,
         [this, cmd]() { return controller->execute(cmd); },
-        [this, isQuery, address](const iio::Result& result) {
+        [this, isQuery, address, sentCommand](const iio::Result& result) {
             // Time to complete the request, formatted for the Duration column.
             const QString duration =
                 QString("%1 ms").arg(result.elapsedMs, 0, 'f', 3);
@@ -714,6 +786,14 @@ void MainWindow::on_commandInput_returnPressed()
             } else {
                 appendIoRow(address, "✓  Command sent successfully",
                             duration, theme::Output::Success);
+            }
+
+            // Retain the last successful command in the input, highlighted so
+            // the next keystroke overwrites it while still allowing a re-send.
+            if (result.success) {
+                ui->commandInput->setText(sentCommand);
+                ui->commandInput->selectAll();
+                ui->commandInput->setFocus();
             }
         });
 }
