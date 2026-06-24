@@ -35,7 +35,7 @@ target_link_libraries(controller_tests PRIVATE
 gtest_discover_tests(controller_tests)
 
 # -----------------------------------------------------------------------------
-# REST API unit tests (only when the API library is available)
+# Command-line API unit tests (only when the API library is available)
 # -----------------------------------------------------------------------------
 
 if(BUILD_API AND TARGET interactiveIO_api)
@@ -50,7 +50,7 @@ if(BUILD_API AND TARGET interactiveIO_api)
 
     gtest_discover_tests(api_tests)
 
-    message(STATUS "REST API tests configured: api_tests")
+    message(STATUS "Command-line API tests configured: api_tests")
 endif()
 
 # -----------------------------------------------------------------------------

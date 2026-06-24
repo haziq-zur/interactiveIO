@@ -32,7 +32,7 @@ option(STATIC_RUNTIME "Link with static runtime library" ON)
 option(BUILD_GUI "Build Qt6 GUI application" ON)
 
 # Option to build the REST API application (enabled by default)
-option(BUILD_API "Build REST API application" ON)
+option(BUILD_API "Build command-line API application" ON)
 
 # Compiler / runtime flags
 if(MSVC)
@@ -121,20 +121,15 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-# REST API dependencies (header-only, downloaded on demand).
+# Command-line API dependency (header-only JSON, downloaded on demand).
 if(BUILD_API)
-    FetchContent_Declare(
-        httplib
-        GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-        GIT_TAG v0.15.3
-    )
     FetchContent_Declare(
         nlohmann_json
         GIT_REPOSITORY https://github.com/nlohmann/json.git
         GIT_TAG v3.11.3
     )
-    FetchContent_MakeAvailable(httplib nlohmann_json)
-    message(STATUS "REST API dependencies ready: cpp-httplib, nlohmann/json")
+    FetchContent_MakeAvailable(nlohmann_json)
+    message(STATUS "Command-line API dependency ready: nlohmann/json")
 endif()
 
 # Qt6 is optional - the GUI and GUI tests are skipped when it is missing.

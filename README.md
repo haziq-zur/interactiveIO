@@ -5,8 +5,8 @@ Interactive SCPI instrument communication tool with unified interface supporting
 ## Features
 
 - **Dual Interface**: Qt6 GUI and Console applications available
-- **REST API**: HTTP server exposing the instrument controller for CLI/automation (curl, scripts, CI)
-- **Screen Image Capture**: Retrieve instrument screenshots (PNG/BMP/JPEG/GIF) via IEEE 488.2 binary block transfer, available in the GUI, console, and REST API
+- **Command-Line API**: One-shot CLI that performs an instrument operation and prints a JSON result (scripts, CI, automation)
+- **Screen Image Capture**: Retrieve instrument screenshots (PNG/BMP/JPEG/GIF) via IEEE 488.2 binary block transfer, available in the GUI, console, and CLI API
 - **Cross-Platform Support**: Single codebase for Windows and Linux
 - **Unified Application**: Single executable with runtime protocol selection
 - **TCP/IP Communication**: Cross-platform socket communication (Winsock2 on Windows, Berkeley sockets on Linux)
@@ -55,13 +55,13 @@ Interactive SCPI instrument communication tool with unified interface supporting
 .\build\bin\Release\interactiveIO.exe
 ```
 
-#### REST API Server
+#### Command-Line API
 
 ```powershell
-.\build\bin\Release\interactiveIO-api.exe --port 8080
+.\build\bin\Release\interactiveIO-api.exe --address 192.168.1.100 --command "*IDN?"
 ```
 
-Then drive the instrument from any HTTP client (see [REST API](#rest-api)).
+Each invocation connects, runs one action and prints a JSON result (see [Command-Line API](#command-line-api)).
 
 **Or create a distribution package:**
 
@@ -204,55 +204,68 @@ Connecting to 192.168.1.200:5025...
 Connected successfully!
 ```
 
-## REST API
+## Command-Line API
 
-The REST API exposes the same instrument controller used by the GUI and console
-over HTTP, so the application can be driven from the command line, scripts, or
-any HTTP client. It is built by default (disable with `-DBUILD_API=OFF`).
+The command-line API exposes the same instrument controller used by the GUI and
+console as a one-shot CLI: each invocation opens a connection, performs a single
+action, prints a JSON object to stdout, and exits. This makes it easy to drive
+from scripts, CI, or any language that can run a process and parse JSON. It is
+built by default (disable with `-DBUILD_API=OFF`).
 
-### Starting the Server
+### Usage
 
 ```powershell
 # Windows
-.\build\bin\Release\interactiveIO-api.exe --host 127.0.0.1 --port 8080
+.\build\bin\Release\interactiveIO-api.exe --address 192.168.1.100 --command "*IDN?"
 ```
 
 ```bash
 # Linux
-./build/bin/interactiveIO-api --host 127.0.0.1 --port 8080
+./build/bin/interactiveIO-api --address 192.168.1.100 --command "*IDN?"
 ```
+
+**Connection options**
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `--host <address>` | Interface to bind | `127.0.0.1` |
-| `--port <port>` | TCP port to listen on | `8080` |
-| `--help` | Show usage and exit | — |
+| `--protocol <tcpip\|visa>` | Transport to use | `tcpip` |
+| `--address <addr>` | Host IP (tcpip) or full VISA resource string | — |
+| `--port <n>` | TCP port (tcpip only) | `5025` |
 
-Press `Ctrl+C` to stop the server.
+For VISA, set `--address` to the full resource string, e.g.
+`TCPIP::192.168.1.100::INSTR`.
 
-### Endpoints
+**Settings (applied before the action)**
 
-| Method | Path | Description | Request body |
-| --- | --- | --- | --- |
-| `GET` | `/api/health` | Liveness probe | — |
-| `GET` | `/api/status` | Connection state | — |
-| `POST` | `/api/connect` | Open a connection | `{"protocol":"tcpip"\|"visa","address":...,"port":...}` |
-| `POST` | `/api/disconnect` | Close the connection | — |
-| `POST` | `/api/command` | Send a SCPI command | `{"command":"*IDN?","timeoutSeconds":5}` |
-| `POST` | `/api/clear` | VISA device clear | — |
-| `POST` | `/api/image` | Capture a screen image | `{"command":":DISP:DATA? PNG","format":"png","encoding":"base64"}` |
-| `POST` | `/api/timeout` | Set VISA I/O timeout | `{"timeoutMs":2000}` |
-| `GET` | `/api/settings` | Read communication settings | — |
-| `PUT` | `/api/settings` | Update settings | `{"eol":"\n","responseTimeoutSeconds":10,"showResponseTime":true}` |
+| Option | Description |
+| --- | --- |
+| `--eol <lf\|cr\|crlf\|none>` | End-of-line appended to commands (default `lf`) |
+| `--response-timeout <n>` | Response timeout in seconds |
+| `--no-response-time` | Do not measure elapsed time |
+| `--set-timeout-ms <n>` | VISA I/O timeout in milliseconds |
 
-For `connect`, use `"protocol":"tcpip"` with `address`/`port`, or
-`"protocol":"visa"` with `address` set to the full VISA resource string
-(e.g. `TCPIP::192.168.1.100::INSTR`). `timeoutSeconds` is optional and overrides
-the configured response timeout for a single command.
+**Actions (choose one)**
+
+| Option | Description |
+| --- | --- |
+| `--command "<scpi>"` | Send a SCPI command / query (`--timeout-seconds <n>` overrides the response timeout for this call) |
+| `--clear` | VISA device clear |
+| `--image "<scpi>"` | Capture an image (`--format`, `--output <file>`, `--max-bytes <n>`) |
+| `--status` | Report connection status only |
+| `--health` | Print service health/version (no connection) |
+| `--help` | Show usage and exit |
+
+### Exit Codes
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | Success |
+| `1` | Operational failure (connection, send, timeout, etc.) |
+| `2` | Usage / invalid input error |
 
 ### Response Format
 
-Every instrument operation returns a JSON body built from the controller's
+Every instrument operation prints a JSON object built from the controller's
 structured result:
 
 ```json
@@ -267,7 +280,7 @@ structured result:
 ```
 
 Failures carry a machine-readable `code`, a `severity`, and a ready-to-display
-`error` string, and the HTTP status reflects the error class:
+`error` string, and the process exits with a non-zero code:
 
 ```json
 {
@@ -280,59 +293,34 @@ Failures carry a machine-readable `code`, a `severity`, and a ready-to-display
 }
 ```
 
-| HTTP status | Meaning | Error codes |
-| --- | --- | --- |
-| `200` | Success | `None` |
-| `400` | Bad request | `InvalidInput` |
-| `409` | Conflict (no active connection) | `NotConnected` |
-| `422` | Unprocessable | `UnsupportedProtocol`, `OperationUnsupported`, `UnsupportedImageFormat` |
-| `413` | Payload too large | `ResponseTooLarge` |
-| `502` | Upstream/instrument failure | `ConnectionFailed`, `InitializationFailed`, `SendFailed`, `ClearFailed`, `BinaryReadFailed`, `MalformedBlock` |
-| `503` | Service unavailable | `ProtocolUnavailable` |
-| `504` | Gateway timeout (no reply) | `NoResponse` |
-
 ### Examples
 
 ```bash
-# Check the server is up
-curl http://127.0.0.1:8080/api/health
+# Service health / version (no connection)
+interactiveIO-api --health
 
-# Connect over TCP/IP
-curl -X POST http://127.0.0.1:8080/api/connect \
-     -H "Content-Type: application/json" \
-     -d '{"protocol":"tcpip","address":"192.168.1.100","port":5025}'
+# Query the instrument identity over TCP/IP
+interactiveIO-api --address 192.168.1.100 --port 5025 --command "*IDN?"
 
-# Connect over VISA (VXI-11)
-curl -X POST http://127.0.0.1:8080/api/connect \
-     -H "Content-Type: application/json" \
-     -d '{"protocol":"visa","address":"TCPIP::192.168.1.100::INSTR"}'
+# Query over VISA (VXI-11)
+interactiveIO-api --protocol visa --address "TCPIP::192.168.1.100::INSTR" --command "*IDN?"
 
-# Query the instrument identity
-curl -X POST http://127.0.0.1:8080/api/command \
-     -H "Content-Type: application/json" \
-     -d '{"command":"*IDN?"}'
+# Send a write command with a custom EOL
+interactiveIO-api --address 192.168.1.100 --eol crlf --command "*RST"
 
-# Inspect / update settings
-curl http://127.0.0.1:8080/api/settings
-curl -X PUT http://127.0.0.1:8080/api/settings \
-     -H "Content-Type: application/json" \
-     -d '{"eol":"\r\n","responseTimeoutSeconds":15}'
+# VISA device clear
+interactiveIO-api --protocol visa --address "TCPIP::192.168.1.100::INSTR" --clear
 
-# Disconnect
-curl -X POST http://127.0.0.1:8080/api/disconnect
+# Connection status only
+interactiveIO-api --address 192.168.1.100 --status
 ```
 
 ```powershell
-# PowerShell equivalents
-Invoke-RestMethod http://127.0.0.1:8080/api/health
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/connect `
-  -ContentType "application/json" `
-  -Body '{"protocol":"tcpip","address":"192.168.1.100","port":5025}'
-
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/command `
-  -ContentType "application/json" -Body '{"command":"*IDN?"}'
+# PowerShell: parse the JSON result
+$r = .\build\bin\Release\interactiveIO-api.exe --address 192.168.1.100 --command "*IDN?" | ConvertFrom-Json
+$r.response
 ```
+
 
 ## Image Capture
 
@@ -369,23 +357,19 @@ Enter output file path (default: capture.png): screen.png
 Saved 18342 bytes (png) to screen.png
 ```
 
-### REST API
+### Command-Line API
 
-`POST /api/image` accepts the capture command, an optional `format` hint, an
-optional `timeoutSeconds`, an optional `maxBytes` cap (default 32 MiB), and an
-`encoding` of `base64` (default) or `binary`.
+`--image "<scpi>"` captures an image. It accepts an optional `--format` hint, an
+optional `--max-bytes` cap (default 32 MiB), and an optional `--output <file>`.
+Without `--output` the raw bytes are base64-encoded into the JSON result; with
+`--output` they are written straight to the file.
 
 ```bash
 # Base64 JSON envelope (default)
-curl -X POST http://127.0.0.1:8080/api/image \
-     -H "Content-Type: application/json" \
-     -d '{"command":":DISPlay:DATA? PNG","format":"png"}'
+interactiveIO-api --address 192.168.1.100 --image ":DISPlay:DATA? PNG" --format png
 
 # Raw bytes written straight to a file
-curl -X POST http://127.0.0.1:8080/api/image \
-     -H "Content-Type: application/json" \
-     -d '{"command":":DISPlay:DATA? PNG","encoding":"binary"}' \
-     --output screen.png
+interactiveIO-api --address 192.168.1.100 --image ":DISPlay:DATA? PNG" --output screen.png
 ```
 
 A base64 response includes the decoded payload alongside the standard result
@@ -405,10 +389,21 @@ fields:
 }
 ```
 
-With `"encoding":"binary"` the endpoint returns `200` with the raw image bytes
-and a matching `Content-Type` (e.g. `image/png`). Oversized responses are
-rejected with `413 ResponseTooLarge`, malformed blocks with `502 MalformedBlock`,
-and unrecognised image data with `422 UnsupportedImageFormat`.
+With `--output` the result instead reports the file it wrote:
+
+```json
+{
+  "success": true,
+  "message": "Captured 18342 bytes (png)",
+  "format": "png",
+  "bytes": 18342,
+  "encoding": "file",
+  "output": "screen.png"
+}
+```
+
+Oversized responses fail with code `ResponseTooLarge`, malformed blocks with
+`MalformedBlock`, and unrecognised image data with `UnsupportedImageFormat`.
 
 ## Architecture
 
@@ -431,7 +426,7 @@ Both protocols are always compiled. VISA support uses dynamic DLL loading, so th
 - CMake 3.15 or higher
 - A C++17 compatible compiler (MSVC, MinGW-w64, or Clang)
 - Windows SDK (for Winsock2)
-- **Network access on first configure**: the REST API fetches `cpp-httplib` and `nlohmann/json` via CMake `FetchContent` (same as Google Test). Disable the API with `-DBUILD_API=OFF` to build offline.
+- **Network access on first configure**: the command-line API fetches `nlohmann/json` via CMake `FetchContent` (same as Google Test). Disable the API with `-DBUILD_API=OFF` to build offline.
 - **Optional**: Qt6 6.10+ with the Svg module (for GUI application) - Download from https://www.qt.io/download-qt-installer
 - **Optional**: NI-VISA or compatible VISA library (for VISA protocol support)
 
@@ -669,11 +664,11 @@ interactiveIO/
 ├── frontend/                     # User-facing apps (depend only on the controller)
 │   ├── console/main.cpp          # Console application (interactiveIO)
 │   ├── gui/                      # Qt6 GUI (interactiveIO-gui) + resources/ icon
-│   └── api/                      # REST API server (interactiveIO-api)
+│   └── api/                      # Command-line API (interactiveIO-api)
 ├── tests/                        # Google Test + Qt Test suites
 │   ├── core/                     # backend tests
 │   ├── controller/               # controller tests
-│   ├── api/                      # REST API tests
+│   ├── api/                      # Command-line API tests
 │   └── gui/                      # GUI tests
 ├── scripts/                      # build.bat, build_debug.bat, package.ps1
 ├── docs/                         # Guides (deployment, VISA, USB, GUI, cross-platform)

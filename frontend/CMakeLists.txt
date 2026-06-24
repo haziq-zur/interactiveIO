@@ -109,25 +109,24 @@ if(BUILD_GUI AND Qt6_FOUND)
 endif()
 
 # -----------------------------------------------------------------------------
-# REST API application (optional)
+# Command-line API application (optional)
 # -----------------------------------------------------------------------------
 
 if(BUILD_API)
-    # Shared API library so the routes/serialisers can be reused by unit tests
-    # without recompiling them into every test target.
+    # Shared API library so the CLI driver and serialisers can be reused by unit
+    # tests without recompiling them into every test target.
     add_library(interactiveIO_api STATIC
-        api/rest_server.cpp
-        api/rest_server.h
+        api/cli_api.cpp
+        api/cli_api.h
     )
 
     target_include_directories(interactiveIO_api PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/api
     )
 
-    # The API links the controller (not the backend) plus the HTTP/JSON libs.
+    # The API links the controller (not the backend) plus the JSON library.
     target_link_libraries(interactiveIO_api PUBLIC
         instrument_controller
-        httplib::httplib
         nlohmann_json::nlohmann_json
     )
 
@@ -150,6 +149,6 @@ if(BUILD_API)
 
     install(TARGETS interactiveIO-api RUNTIME DESTINATION bin)
 
-    message(STATUS "REST API application configured: interactiveIO-api")
+    message(STATUS "Command-line API application configured: interactiveIO-api")
 endif()
 

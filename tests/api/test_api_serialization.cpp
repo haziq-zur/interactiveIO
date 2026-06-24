@@ -2,10 +2,10 @@
 
 #include <nlohmann/json.hpp>
 
-#include "rest_server.h"
+#include "cli_api.h"
 
 // These tests exercise the pure request/response mapping helpers, so they need
-// no sockets or a running server.
+// no instrument or running process.
 
 using iio::ConnectionConfig;
 using iio::ErrorCode;
@@ -49,50 +49,46 @@ TEST(ApiSerializationTest, FailureResultIncludesError)
     EXPECT_FALSE(j.contains("response"));
 }
 
-TEST(ApiStatusTest, MapsCodesToHttpStatus)
+TEST(ApiStatusTest, MapsResultsToExitCodes)
 {
     Result ok;
     ok.success = true;
-    EXPECT_EQ(iio::api::httpStatusFor(ok), 200);
-
-    Result notConnected;
-    notConnected.code = ErrorCode::NotConnected;
-    EXPECT_EQ(iio::api::httpStatusFor(notConnected), 409);
+    EXPECT_EQ(iio::api::exitCodeFor(ok), 0);
 
     Result invalid;
     invalid.code = ErrorCode::InvalidInput;
-    EXPECT_EQ(iio::api::httpStatusFor(invalid), 400);
+    EXPECT_EQ(iio::api::exitCodeFor(invalid), 2);
+
+    Result notConnected;
+    notConnected.code = ErrorCode::NotConnected;
+    EXPECT_EQ(iio::api::exitCodeFor(notConnected), 1);
 
     Result timeout;
     timeout.code = ErrorCode::NoResponse;
-    EXPECT_EQ(iio::api::httpStatusFor(timeout), 504);
+    EXPECT_EQ(iio::api::exitCodeFor(timeout), 1);
 
     Result connFailed;
     connFailed.code = ErrorCode::ConnectionFailed;
-    EXPECT_EQ(iio::api::httpStatusFor(connFailed), 502);
-
-    Result unavailable;
-    unavailable.code = ErrorCode::ProtocolUnavailable;
-    EXPECT_EQ(iio::api::httpStatusFor(unavailable), 503);
+    EXPECT_EQ(iio::api::exitCodeFor(connFailed), 1);
 }
 
-TEST(ApiStatusTest, MapsImageErrorCodesToHttpStatus)
+TEST(ApiStatusTest, ImageErrorCodesAreOperationalFailures)
 {
     Result tooLarge;
     tooLarge.code = ErrorCode::ResponseTooLarge;
-    EXPECT_EQ(iio::api::httpStatusFor(tooLarge), 413);
+    EXPECT_EQ(iio::api::exitCodeFor(tooLarge), 1);
 
     Result malformed;
     malformed.code = ErrorCode::MalformedBlock;
-    EXPECT_EQ(iio::api::httpStatusFor(malformed), 502);
+    EXPECT_EQ(iio::api::exitCodeFor(malformed), 1);
 
     Result binaryFail;
     binaryFail.code = ErrorCode::BinaryReadFailed;
-    EXPECT_EQ(iio::api::httpStatusFor(binaryFail), 502);
+    EXPECT_EQ(iio::api::exitCodeFor(binaryFail), 1);
 
     Result badFormat;
     badFormat.code = ErrorCode::UnsupportedImageFormat;
-    EXPECT_EQ(iio::api::httpStatusFor(badFormat), 422);
+    EXPECT_EQ(iio::api::exitCodeFor(badFormat), 1);
 }
 
 TEST(ApiBase64Test, EncodesKnownVectors)

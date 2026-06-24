@@ -6,7 +6,7 @@
 .DESCRIPTION
     Stages the built executables, gathers every runtime dependency the GUI
     needs (Qt DLLs + plugins via windeployqt, plus the MinGW runtime DLLs),
-    adds the standalone console / REST-API executables and the key docs, then
+    adds the standalone console / command-line-API executables and the key docs, then
     compresses the whole folder into dist\interactiveIO-v<version>-Windows-x64.zip.
 
     The console (interactiveIO.exe) and API (interactiveIO-api.exe) builds are
@@ -141,7 +141,7 @@ interactiveIO v$version - Windows x64
 HOW TO RUN
   - GUI:      double-click interactiveIO-gui.exe
   - Console:  run interactiveIO.exe
-  - REST API: run interactiveIO-api.exe
+  - CLI API:  run interactiveIO-api.exe --help
 
 REQUIREMENTS
   - Windows 10 or later. No Qt or compiler install needed - all required
